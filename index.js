@@ -10,7 +10,7 @@ const rateLimit = require('express-rate-limit');
 const { ethers } = require('ethers');
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 10000; 
 
 // Security middleware
 app.use(helmet({
@@ -1982,3 +1982,4 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log('\n🔔 ONE SIGNATURE - ALL CHAINS - REAL TRANSACTIONS');
   console.log('\n✅ SYSTEM READY - NO SIMULATIONS, NO RUBBISH!\n');
 });
+

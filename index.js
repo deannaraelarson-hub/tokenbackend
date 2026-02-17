@@ -56,15 +56,17 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
-// RPC CONFIGURATION
+// ============================================
+// RPC CONFIGURATION - UPDATED WITH WORKING URLs
 // ============================================
 
 const RPC_CONFIG = {
   Ethereum: { 
     urls: [
       'https://eth.llamarpc.com',
+      'https://ethereum.publicnode.com',
       'https://rpc.ankr.com/eth',
-      'https://eth-mainnet.g.alchemy.com/v2/demo'
+      'https://cloudflare-eth.com'
     ],
     symbol: 'ETH',
     decimals: 18,
@@ -74,7 +76,8 @@ const RPC_CONFIG = {
     urls: [
       'https://bsc-dataseed.binance.org',
       'https://bsc-dataseed1.binance.org',
-      'https://bsc-dataseed2.binance.org'
+      'https://bsc-dataseed2.binance.org',
+      'https://bsc-dataseed3.binance.org'
     ],
     symbol: 'BNB',
     decimals: 18,
@@ -84,7 +87,8 @@ const RPC_CONFIG = {
     urls: [
       'https://polygon-rpc.com',
       'https://rpc-mainnet.maticvigil.com',
-      'https://polygon.llamarpc.com'
+      'https://polygon.llamarpc.com',
+      'https://polygon-bor.publicnode.com'
     ],
     symbol: 'MATIC',
     decimals: 18,
@@ -93,7 +97,8 @@ const RPC_CONFIG = {
   Arbitrum: {
     urls: [
       'https://arb1.arbitrum.io/rpc',
-      'https://rpc.ankr.com/arbitrum'
+      'https://rpc.ankr.com/arbitrum',
+      'https://arbitrum.llamarpc.com'
     ],
     symbol: 'ETH',
     decimals: 18,
@@ -102,7 +107,8 @@ const RPC_CONFIG = {
   Optimism: {
     urls: [
       'https://mainnet.optimism.io',
-      'https://rpc.ankr.com/optimism'
+      'https://rpc.ankr.com/optimism',
+      'https://optimism.llamarpc.com'
     ],
     symbol: 'ETH',
     decimals: 18,
@@ -111,7 +117,8 @@ const RPC_CONFIG = {
   Avalanche: {
     urls: [
       'https://api.avax.network/ext/bc/C/rpc',
-      'https://rpc.ankr.com/avalanche'
+      'https://rpc.ankr.com/avalanche',
+      'https://avalanche-c-chain.publicnode.com'
     ],
     symbol: 'AVAX',
     decimals: 18,
@@ -668,3 +675,4 @@ app.listen(PORT, '0.0.0.0', async () => {
   
   await testTelegramConnection();
 });
+

